@@ -135,6 +135,20 @@ if [[ -z "$FEEDBACK" ]] && [[ "$INTERACTION_COUNT" -ge "$BOOTSTRAP_MIN" ]] && [[
     fi
 fi
 
+# 4. Debugging prompt with no diagnostic info
+if [[ -z "$FEEDBACK" ]] && echo "$PROMPT_LOWER" | grep -qE "(error|bug|broken|failing|crash(es|ed)?|exception|traceback|doesn'?t work|not working|won'?t work|blowing up)"; then
+    if ! echo "$PROMPT" | grep -qE "(\`|'|\"|at line [0-9]|\.[a-z]{2,4}:[0-9]|Error:|Exception:|Traceback|FAILED|PASS|exit code)"; then
+        FEEDBACK="Debugging is faster with the actual error. Include the error message, stack trace, or failing test output if you have it."
+        TAGS="missing_diagnostics"
+    fi
+fi
+
+# 5. "just" minimizer — signals underestimated scope
+if [[ -z "$FEEDBACK" ]] && echo "$PROMPT_LOWER" | grep -qE "(^just |[^a-z]just )(fix|make|add|change|update|remove|delete|refactor|clean|simplify|write|move|rename|replace|convert|migrate)"; then
+    FEEDBACK="Tasks that start with 'just' often have hidden complexity. If you know the scope, include it — Claude will follow it."
+    TAGS="scope_underestimated"
+fi
+
 # 7. Elite mode only: complex prompt with no output format specified
 if [[ -z "$FEEDBACK" ]] && [[ "$MODE" == "elite" ]] && [[ "$WORD_COUNT" -gt 15 ]]; then
     if ! echo "$PROMPT_LOWER" | grep -qE "(output|format|return|respond with|as a |in the form|table|list|json|markdown|summary|step.by.step)"; then

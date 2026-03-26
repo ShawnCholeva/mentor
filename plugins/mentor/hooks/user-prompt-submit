@@ -82,6 +82,11 @@ WORD_COUNT=$(echo "$PROMPT" | wc -w | tr -d '[:space:]')
 PROMPT_LOWER=$(echo "$PROMPT" | tr '[:upper:]' '[:lower:]')
 PROMPT_TRIMMED=$(echo "$PROMPT_LOWER" | tr -d '[:punct:]' | xargs)
 
+# Guard: skill invocations — never coach on /command prompts
+if echo "$PROMPT" | grep -qE "^/[a-z]"; then
+    exit 0
+fi
+
 # Guard: conversational affirmations — these are answers to Claude's questions, never vague
 AFFIRMATIONS="^(yes|no|ok|okay|sure|yep|nope|yup|nah|agreed|correct|exactly|right|proceed|continue|go ahead|do it|sounds good|looks good|make it so|that works|perfect|great|fine|done|got it)$"
 if echo "$PROMPT_TRIMMED" | grep -qiE "$AFFIRMATIONS"; then

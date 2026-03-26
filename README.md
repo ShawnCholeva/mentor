@@ -17,10 +17,23 @@ Everything is logged to `~/.claude/coaching/interactions.jsonl`.
 ## Installation
 
 ```bash
-/plugin install ShawnCholeva/mentor
+/plugin marketplace add ShawnCholeva/mentor
+/plugin install mentor@ShawnCholeva/mentor
 ```
 
 Start a new session after installing — the coaching hooks activate automatically, no configuration needed.
+
+### Official marketplace
+
+Mentor is also available via the official Claude Code plugin marketplace:
+
+```bash
+/plugin install mentor@claude-plugins-official
+```
+
+Or browse to it at https://claude.com/plugins and search for **mentor**.
+
+To submit updates or report issues with the marketplace listing: https://claude.ai/settings/plugins/submit
 
 ## What it catches
 

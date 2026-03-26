@@ -80,6 +80,36 @@ FEEDBACK=""
 TAGS=""
 WORD_COUNT=$(echo "$PROMPT" | wc -w | tr -d '[:space:]')
 PROMPT_LOWER=$(echo "$PROMPT" | tr '[:upper:]' '[:lower:]')
+PROMPT_TRIMMED=$(echo "$PROMPT_LOWER" | tr -d '[:punct:]' | xargs)
+
+# Guard: conversational affirmations — these are answers to Claude's questions, never vague
+AFFIRMATIONS="^(yes|no|ok|okay|sure|yep|nope|yup|nah|agreed|correct|exactly|right|proceed|continue|go ahead|do it|sounds good|looks good|make it so|that works|perfect|great|fine|done|got it)$"
+if echo "$PROMPT_TRIMMED" | grep -qiE "$AFFIRMATIONS"; then
+    exit 0
+fi
+
+# Guard: per-session cooldown — suppress if coaching already fired in the last 30 seconds
+# (prevents duplicate fires from interrupted/partial prompt submissions)
+STATE_FILE_EARLY="${COACHING_DIR}/session-${SESSION_ID}.tmp"
+if [[ -f "$STATE_FILE_EARLY" ]]; then
+    LAST_TS=$(printf '%s' "$(cat "$STATE_FILE_EARLY")" | "$PYTHON_CMD" -c "
+import json, sys, datetime
+try:
+    d = json.load(sys.stdin)
+    ts = d.get('timestamp', '')
+    if ts:
+        last = datetime.datetime.fromisoformat(ts.replace('Z', '+00:00'))
+        now = datetime.datetime.now(datetime.timezone.utc)
+        print(int((now - last).total_seconds()))
+    else:
+        print(9999)
+except:
+    print(9999)
+" 2>/dev/null || echo "9999")
+    if [[ "$LAST_TS" -lt 30 ]]; then
+        exit 0
+    fi
+fi
 
 # 1. Very short prompt (not a skill invocation)
 if [[ "$WORD_COUNT" -lt 6 ]] && ! echo "$PROMPT" | grep -qE "^/[a-z]"; then

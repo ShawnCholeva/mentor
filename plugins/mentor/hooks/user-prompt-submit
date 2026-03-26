@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# UserPromptSubmit hook — inline prompt coaching via additionalContext
-# Part of mentor plugin
+# UserPromptSubmit hook — AI-powered prompt coaching via additionalContext
+# Part of mentor plugin (v2.0)
 #
-# Evaluates the user's prompt with heuristics before it reaches Claude.
+# Evaluates the user's prompt with Claude haiku before it reaches Claude.
 # On a high-confidence match, injects a coaching note as additionalContext
 # so Claude surfaces it at the top of its response.
 # Always exits 0 — never blocks a prompt (NFR-5).
@@ -12,11 +12,15 @@ set -euo pipefail
 COACHING_DIR="${HOME}/.claude/coaching"
 CONFIG_FILE="${COACHING_DIR}/config.json"
 LOG_FILE="${COACHING_DIR}/interactions.jsonl"
+PHILOSOPHY_FILE="${COACHING_DIR}/philosophy.md"
+USER_MODEL_FILE="${COACHING_DIR}/user-model.json"
+
+# Resolve script directory to find lib/ scripts
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULTS_DIR="$(cd "$SCRIPT_DIR/../defaults" && pwd 2>/dev/null || echo "")"
+EVALUATE_SCRIPT="${SCRIPT_DIR}/lib/evaluate-prompt.py"
 
 mkdir -p "$COACHING_DIR"
-
-# ─── Read stdin ───────────────────────────────────────────────────────────────
-INPUT=$(cat)
 
 # ─── JSON parsing: python3 → python → silent pass-through ────────────────────
 PYTHON_CMD=""
@@ -27,6 +31,9 @@ elif command -v python &>/dev/null; then
 else
     exit 0
 fi
+
+# ─── Read stdin ───────────────────────────────────────────────────────────────
+INPUT=$(cat)
 
 get_field() {
     local field="$1"
@@ -69,32 +76,19 @@ fi
 
 [[ "$ENABLED" != "true" ]] && exit 0
 
-# ─── Count interactions (bootstrap gate for pattern-based checks) ─────────────
-INTERACTION_COUNT=0
-if [[ -f "$LOG_FILE" ]]; then
-    INTERACTION_COUNT=$(wc -l < "$LOG_FILE" 2>/dev/null | tr -d '[:space:]' || echo "0")
-fi
-
-# ─── Heuristic coaching engine ────────────────────────────────────────────────
-FEEDBACK=""
-TAGS=""
-WORD_COUNT=$(echo "$PROMPT" | wc -w | tr -d '[:space:]')
-PROMPT_LOWER=$(echo "$PROMPT" | tr '[:upper:]' '[:lower:]')
-PROMPT_TRIMMED=$(echo "$PROMPT_LOWER" | tr -d '[:punct:]' | xargs)
-
-# Guard: skill invocations — never coach on /command prompts
+# ─── Guard: skill invocations — never coach on /command prompts ───────────────
 if echo "$PROMPT" | grep -qE "^/[a-z]"; then
     exit 0
 fi
 
-# Guard: conversational affirmations — these are answers to Claude's questions, never vague
+# ─── Guard: conversational affirmations ───────────────────────────────────────
+PROMPT_TRIMMED=$(echo "$PROMPT" | tr '[:upper:]' '[:lower:]' | tr -d '[:punct:]' | xargs)
 AFFIRMATIONS="^(yes|no|ok|okay|sure|yep|nope|yup|nah|agreed|correct|exactly|right|proceed|continue|go ahead|do it|sounds good|looks good|make it so|that works|perfect|great|fine|done|got it)$"
 if echo "$PROMPT_TRIMMED" | grep -qiE "$AFFIRMATIONS"; then
     exit 0
 fi
 
-# Guard: per-session cooldown — suppress if coaching already fired in the last 30 seconds
-# (prevents duplicate fires from interrupted/partial prompt submissions)
+# ─── Guard: per-session cooldown (30s) ────────────────────────────────────────
 STATE_FILE_EARLY="${COACHING_DIR}/session-${SESSION_ID}.tmp"
 if [[ -f "$STATE_FILE_EARLY" ]]; then
     LAST_TS=$(printf '%s' "$(cat "$STATE_FILE_EARLY")" | "$PYTHON_CMD" -c "
@@ -116,61 +110,34 @@ except:
     fi
 fi
 
-# 1. Very short prompt (not a skill invocation)
-if [[ "$WORD_COUNT" -lt 6 ]] && ! echo "$PROMPT" | grep -qE "^/[a-z]"; then
-    FEEDBACK="Prompt is very short. Add: what you want, any constraints, and expected output format."
-    TAGS="vague"
+# ─── Guard: API key required ──────────────────────────────────────────────────
+[[ -z "${ANTHROPIC_API_KEY:-}" ]] && exit 0
+
+# ─── Guard: evaluate script must exist ────────────────────────────────────────
+[[ ! -f "$EVALUATE_SCRIPT" ]] && exit 0
+
+# ─── Bootstrap: seed philosophy.md if missing ────────────────────────────────
+if [[ ! -f "$PHILOSOPHY_FILE" ]] && [[ -n "$DEFAULTS_DIR" ]] && [[ -f "${DEFAULTS_DIR}/philosophy.md" ]]; then
+    cp "${DEFAULTS_DIR}/philosophy.md" "$PHILOSOPHY_FILE" 2>/dev/null || true
 fi
 
-# 2. Vague starter phrases with no constraints
-if [[ -z "$FEEDBACK" ]] && echo "$PROMPT_LOWER" | grep -qE "^(help me|fix this|make it work|can you help|i need to|just (do|fix|make|build))"; then
-    if [[ "$WORD_COUNT" -lt 12 ]]; then
-        FEEDBACK="Prompt starts vague. Specify: what system/component, the desired behavior, and what success looks like."
-        TAGS="vague"
-    fi
+# ─── Bootstrap: seed user-model.json if missing ──────────────────────────────
+if [[ ! -f "$USER_MODEL_FILE" ]]; then
+    printf '{"strengths":[],"weaknesses":[],"current_focus":"","recent_progress":"","intervention_history":[]}\n' > "$USER_MODEL_FILE" 2>/dev/null || true
 fi
 
-# 3. Pattern-based: repeated vague prompts in recent history
-if [[ -z "$FEEDBACK" ]] && [[ "$INTERACTION_COUNT" -ge "$BOOTSTRAP_MIN" ]] && [[ -f "$LOG_FILE" ]]; then
-    RECENT_VAGUE=$(tail -20 "$LOG_FILE" 2>/dev/null | grep -c '"vague"' 2>/dev/null || true)
-    RECENT_VAGUE="${RECENT_VAGUE:-0}"
-    if [[ "$RECENT_VAGUE" -ge 5 ]]; then
-        FEEDBACK="Pattern: recent prompts have often been vague, leading to extra back-and-forth. Try: goal + constraints + output format upfront."
-        TAGS="high_iteration"
-    fi
+# ─── Load philosophy and user model ──────────────────────────────────────────
+PHILOSOPHY=""
+if [[ -f "$PHILOSOPHY_FILE" ]]; then
+    PHILOSOPHY=$(cat "$PHILOSOPHY_FILE" 2>/dev/null || echo "")
 fi
 
-# 4. Debugging prompt with no diagnostic info
-if [[ -z "$FEEDBACK" ]] && echo "$PROMPT_LOWER" | grep -qE "(error|bug|broken|failing|crash(es|ed)?|exception|traceback|doesn'?t work|not working|won'?t work|blowing up)"; then
-    if ! echo "$PROMPT" | grep -qE "(\`|'|\"|at line [0-9]|\.[a-z]{2,4}:[0-9]|Error:|Exception:|Traceback|FAILED|PASS|exit code)"; then
-        FEEDBACK="Debugging is faster with the actual error. Include the error message, stack trace, or failing test output if you have it."
-        TAGS="missing_diagnostics"
-    fi
+USER_MODEL="{}"
+if [[ -f "$USER_MODEL_FILE" ]]; then
+    USER_MODEL=$(cat "$USER_MODEL_FILE" 2>/dev/null || echo "{}")
 fi
 
-# 5. "just" minimizer — signals underestimated scope
-if [[ -z "$FEEDBACK" ]] && echo "$PROMPT_LOWER" | grep -qE "(^just |[^a-z]just )(fix|make|add|change|update|remove|delete|refactor|clean|simplify|write|move|rename|replace|convert|migrate)"; then
-    FEEDBACK="Tasks that start with 'just' often have hidden complexity. If you know the scope, include it — Claude will follow it."
-    TAGS="scope_underestimated"
-fi
-
-# 7. Elite mode only: complex prompt with no output format specified
-if [[ -z "$FEEDBACK" ]] && [[ "$MODE" == "elite" ]] && [[ "$WORD_COUNT" -gt 15 ]]; then
-    if ! echo "$PROMPT_LOWER" | grep -qE "(output|format|return|respond with|as a |in the form|table|list|json|markdown|summary|step.by.step)"; then
-        FEEDBACK="No output format specified. Adding one (list, table, JSON, step-by-step) often improves response quality."
-        TAGS="missing_structure"
-    fi
-fi
-
-# No coaching triggered — pass through
-[[ -z "$FEEDBACK" ]] && exit 0
-
-# ─── Write session state for stop-logger ─────────────────────────────────────
-TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
-STATE_FILE="${COACHING_DIR}/session-${SESSION_ID}.tmp"
-printf '{"coaching_triggered":true,"tags":["%s"],"timestamp":"%s"}\n' "$TAGS" "$TIMESTAMP" > "$STATE_FILE"
-
-# ─── Build coaching message ───────────────────────────────────────────────────
+# ─── Build JSON payload for evaluate-prompt.py ───────────────────────────────
 escape_for_json() {
     local s="$1"
     s="${s//\\/\\\\}"
@@ -181,8 +148,74 @@ escape_for_json() {
     printf '%s' "$s"
 }
 
-FEEDBACK_ESC=$(escape_for_json "$FEEDBACK")
-COACHING_MSG="<prompt-coaching-note>\\nBefore responding, output this exact line verbatim, then proceed with your answer:\\n\\n\ud83d\udca1 Mentor: ${FEEDBACK_ESC}\\n</prompt-coaching-note>"
+PROMPT_ESC=$(escape_for_json "$PROMPT")
+PHILOSOPHY_ESC=$(escape_for_json "$PHILOSOPHY")
+
+PAYLOAD=$(printf '{"prompt":"%s","mode":"%s","philosophy":"%s","user_model":%s}' \
+    "$PROMPT_ESC" \
+    "$MODE" \
+    "$PHILOSOPHY_ESC" \
+    "$USER_MODEL")
+
+# ─── Call evaluate-prompt.py (6s timeout) ─────────────────────────────────────
+JUDGMENT=$(printf '%s' "$PAYLOAD" | timeout 6 "$PYTHON_CMD" "$EVALUATE_SCRIPT" 2>/dev/null || echo '{"intervene":false}')
+
+# ─── Parse judgment ────────────────────────────────────────────────────────────
+INTERVENE=$( printf '%s' "$JUDGMENT" | "$PYTHON_CMD" -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print('true' if d.get('intervene') else 'false')
+except:
+    print('false')
+" 2>/dev/null || echo "false")
+
+[[ "$INTERVENE" != "true" ]] && exit 0
+
+INTERVENTION_TYPE=$(printf '%s' "$JUDGMENT" | "$PYTHON_CMD" -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print(d.get('type', 'nudge'))
+except:
+    print('nudge')
+" 2>/dev/null || echo "nudge")
+
+FEEDBACK=$(printf '%s' "$JUDGMENT" | "$PYTHON_CMD" -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print(d.get('message', ''))
+except:
+    print('')
+" 2>/dev/null || echo "")
+
+[[ -z "$FEEDBACK" ]] && exit 0
+
+# ─── Write session state for stop-logger ─────────────────────────────────────
+TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
+STATE_FILE="${COACHING_DIR}/session-${SESSION_ID}.tmp"
+FEEDBACK_FOR_STATE=$(escape_for_json "$FEEDBACK")
+printf '{"coaching_triggered":true,"type":"%s","tags":["%s"],"message":"%s","timestamp":"%s"}\n' \
+    "$INTERVENTION_TYPE" \
+    "$INTERVENTION_TYPE" \
+    "$FEEDBACK_FOR_STATE" \
+    "$TIMESTAMP" > "$STATE_FILE"
+
+# ─── Format coaching message by intervention type ─────────────────────────────
+case "$INTERVENTION_TYPE" in
+    nudge)         PREFIX="💡 Mentor (nudge):" ;;
+    correction)    PREFIX="⚡ Mentor:" ;;
+    challenge)     PREFIX="🔥 Mentor (pushback):" ;;
+    reinforcement) PREFIX="✅ Mentor:" ;;
+    *)             PREFIX="💡 Mentor:" ;;
+esac
+
+FULL_MSG="${PREFIX} ${FEEDBACK}"
+
+# ─── Build coaching message ───────────────────────────────────────────────────
+FULL_MSG_ESC=$(escape_for_json "$FULL_MSG")
+COACHING_MSG="<prompt-coaching-note>\\nBefore responding, output this exact line verbatim, then proceed with your answer:\\n\\n${FULL_MSG_ESC}\\n</prompt-coaching-note>"
 
 # ─── Output hookSpecificOutput ────────────────────────────────────────────────
 printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "UserPromptSubmit",\n    "additionalContext": "%s"\n  }\n}\n' "$COACHING_MSG"

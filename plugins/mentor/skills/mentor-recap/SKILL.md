@@ -2,8 +2,10 @@
 name: mentor-recap
 description: >-
   Analyzes your cross-session Claude usage patterns from the interaction log
-  (~/.claude/coaching/interactions.jsonl). Produces a structured behavioral
-  report: skill usage, prompt quality trends, efficiency patterns, and suggestions.
+  (~/.claude/coaching/interactions.jsonl) and user model
+  (~/.claude/coaching/user-model.json). Produces a structured behavioral
+  report: skill usage, prompt quality trends, efficiency patterns, user model
+  state, and suggestions.
   Usage: /mentor-recap
 ---
 
@@ -13,11 +15,13 @@ Analyze the user's cross-session Claude usage patterns and produce a longitudina
 
 ---
 
-## Step 1 — Load the interaction log
+## Step 1 — Load the interaction log and user model
 
-Read `~/.claude/coaching/interactions.jsonl` using the Read tool.
+Read both files in parallel:
+- `~/.claude/coaching/interactions.jsonl`
+- `~/.claude/coaching/user-model.json`
 
-If the file does not exist or is empty:
+If the interaction log does not exist or is empty:
 → Tell the user Mentor hasn't logged enough data yet.
 → Remind them the hook logs automatically on every interaction — just keep using Claude normally.
 → Stop here.
@@ -30,10 +34,14 @@ Parse the JSONL: each line is one interaction entry with fields:
 - `skill_used` — skill invoked (e.g. `/mentor`, or null if a direct prompt)
 - `turn_count` — number of turns to complete the task
 - `coaching_triggered` — whether Mentor intervened
-- `tags` — matched trigger types (vague, high_iteration, missing_structure)
+- `intervention_type` — type of intervention: `nudge`, `correction`, `challenge`, `reinforcement`, or null
+- `tags` — matched trigger types
 - `timestamp` — ISO8601
 
 Use the last 100 entries (or all if fewer).
+
+Parse the user model JSON (or use empty defaults if missing/invalid):
+- `strengths`, `weaknesses`, `current_focus`, `recent_progress`, `intervention_history`
 
 ---
 
@@ -50,6 +58,7 @@ Calculate:
 | Avg turn count | Mean of `turn_count` across all entries |
 | High-iteration rate | % of entries where `turn_count` >= 4 |
 | Mentor trigger rate | % where `coaching_triggered` = true |
+| Intervention breakdown | Count by `intervention_type` (nudge/correction/challenge/reinforcement) |
 | Top tags | Most frequent values in `tags` arrays |
 
 ---
@@ -60,8 +69,10 @@ Look for:
 
 1. **Vagueness pattern** — high frequency of `vague` intent or tag → prompt structure habit
 2. **High iteration pattern** — avg turn_count > 3 → prompts not landing on first try
-4. **Improving trend** — if sortable by timestamp: is avg turn_count decreasing over time?
-5. **Mentor frequency** — if coaching triggered on >40% of prompts, threshold may be too sensitive
+3. **Improving trend** — if sortable by timestamp: is avg turn_count decreasing over time?
+4. **Mentor frequency** — if coaching triggered on >40% of prompts, threshold may be too sensitive
+5. **Intervention type balance** — heavy correction/challenge with no reinforcement may indicate overly strict thresholds, or consistent issues
+6. **User model alignment** — do the weaknesses in the model match the patterns in the log? Flag any discrepancy.
 
 ---
 
@@ -74,7 +85,15 @@ Format the output as:
 (Last N interactions · Cross-session)
 
 ### Summary
-[2-3 sentence overview of overall posture]
+[2-3 sentence overview of overall posture and trajectory]
+
+### User Model
+**Strengths:** [list, or "None recorded yet"]
+**Weaknesses:** [list, or "None recorded yet"]
+**Current focus:** [value or "Not set"]
+**Recent progress:** [value or "None noted"]
+
+[If user model is empty: "The user model is still building — it populates after every 5 interactions."]
 
 ### Patterns Detected
 [For each pattern found:]
@@ -82,6 +101,8 @@ Pattern: [name]
   Frequency: [X% of interactions / N occurrences]
   Impact: [what this costs — extra turns, rework, wrong output]
   Suggestion: [specific, actionable change]
+
+[If no patterns: "No strong patterns detected — usage looks balanced."]
 
 ### Skill Usage
 [Ranked list of skills used and how often, or "No skill invocations recorded" if none]
@@ -94,10 +115,13 @@ High-iteration tasks (4+ turns): [X%]
 
 ### Mentor Activity
 Triggered: [X% of prompts]
-Top trigger: [most common tag]
+Breakdown: nudge [N] · correction [N] · challenge [N] · reinforcement [N]
+Top trigger: [most common tag or intervention type]
+
+[If reinforcement count is 0 and total interventions > 5: "No reinforcement fired yet — the mentor may be missing opportunities to acknowledge improvement."]
 
 ### Top Recommendations
-1. [Most impactful change]
+1. [Most impactful change, grounded in the data above]
 2. [Second most impactful]
 3. [Third]
 ```
@@ -109,6 +133,8 @@ Keep the report concise. Focus on actionable patterns, not exhaustive statistics
 ## Step 5 — Suggest next action
 
 End with one of:
-- If Mentor trigger rate is high: "Run `/mentor chill` to reduce intervention frequency, or `/mentor elite` if you want more"
-- If turn count is high and vagueness is the top tag: "Your prompts may benefit from more upfront structure — goal, constraints, output format"
+- If API key not configured: "Run `/mentor status` to check your API key — coaching requires `ANTHROPIC_API_KEY` to be set."
+- If Mentor trigger rate is high: "Run `/mentor chill` to reduce intervention frequency."
+- If turn count is high and vagueness is the top tag: "Your prompts may benefit from more upfront structure — goal, constraints, output format."
+- If user model weaknesses are stale (last intervention_history entry is old): "The user model may be stale. Keep using Claude normally and it will update every 5 interactions."
 - If no strong patterns: "Things look solid. Keep an eye on turn count as a leading indicator."

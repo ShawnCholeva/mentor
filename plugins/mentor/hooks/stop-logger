@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
 # Stop hook — interaction logger for coaching system
-# Part of mentor plugin
+# Part of mentor plugin (v2.0)
 #
 # Fires after every Claude response. Reads the session state written by
 # user-prompt-submit, counts turns from the transcript, and appends a
 # structured entry to ~/.claude/coaching/interactions.jsonl.
+# Every 5th interaction, triggers an async user model update.
 # Always exits 0 — never disrupts Claude Code's normal shutdown flow.
 
 set -euo pipefail
 
 COACHING_DIR="${HOME}/.claude/coaching"
 LOG_FILE="${COACHING_DIR}/interactions.jsonl"
+USER_MODEL_FILE="${COACHING_DIR}/user-model.json"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+UPDATE_SCRIPT="${SCRIPT_DIR}/lib/update-user-model.py"
 
 mkdir -p "$COACHING_DIR"
 
@@ -47,6 +52,8 @@ TRANSCRIPT_PATH=$(get_field "transcript_path")
 # ─── Read session state from user-prompt-submit hook ─────────────────────────
 STATE_FILE="${COACHING_DIR}/session-${SESSION_ID}.tmp"
 COACHING_TRIGGERED="false"
+INTERVENTION_TYPE="null"
+COACHING_MESSAGE=""
 TAGS="[]"
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
 
@@ -69,6 +76,23 @@ try:
 except:
     print('[]')
 " 2>/dev/null || echo "[]")
+    INTERVENTION_TYPE=$(printf '%s' "$STATE" | "$PYTHON_CMD" -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    t = d.get('type', None)
+    print('\"' + t + '\"' if t else 'null')
+except:
+    print('null')
+" 2>/dev/null || echo "null")
+    COACHING_MESSAGE=$(printf '%s' "$STATE" | "$PYTHON_CMD" -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print(d.get('message', ''))
+except:
+    print('')
+" 2>/dev/null || echo "")
     rm -f "$STATE_FILE"
 fi
 
@@ -85,14 +109,12 @@ fi
 INTENT="unknown"
 SKILL_USED="null"
 if [[ -n "$TRANSCRIPT_PATH" ]] && [[ -f "$TRANSCRIPT_PATH" ]]; then
-    # Get last user message text
     LAST_PROMPT=$(grep '"role":"user"\|"role": "user"' "$TRANSCRIPT_PATH" 2>/dev/null | \
         tail -1 | "$PYTHON_CMD" -c "
 import json, sys, re
 try:
     line = sys.stdin.read().strip()
     d = json.loads(line)
-    # Handle different transcript formats
     msg = d.get('message', d)
     content = msg.get('content', '')
     if isinstance(content, list):
@@ -105,16 +127,12 @@ except:
 " 2>/dev/null || echo "")
 
     if [[ -n "$LAST_PROMPT" ]]; then
-        P_LOWER=$(echo "$LAST_PROMPT" | tr '[:upper:]' '[:lower:]')
-
-        # Detect skill used (any /skill-name prefix)
         if echo "$LAST_PROMPT" | grep -qE "^/[a-z]"; then
             _skill=$(echo "$LAST_PROMPT" | grep -oE "^/[a-z][a-z0-9-]+" | head -1)
             SKILL_USED="\"${_skill}\""
             INTENT="skill-invoked"
         fi
 
-        # Classify as vague if short and no skill used
         if [[ "$INTENT" == "unknown" ]]; then
             WORD_COUNT=$(echo "$LAST_PROMPT" | wc -w | tr -d '[:space:]')
             if [[ "$WORD_COUNT" -lt 6 ]]; then
@@ -133,7 +151,7 @@ ENTRY_ID=$(uuidgen 2>/dev/null || \
            echo "${SESSION_ID}-${TIMESTAMP}")
 
 # ─── Append log entry ─────────────────────────────────────────────────────────
-printf '{"id":"%s","session_id":"%s","timestamp":"%s","intent":"%s","skill_used":%s,"turn_count":%s,"coaching_triggered":%s,"tags":%s}\n' \
+printf '{"id":"%s","session_id":"%s","timestamp":"%s","intent":"%s","skill_used":%s,"turn_count":%s,"coaching_triggered":%s,"intervention_type":%s,"tags":%s}\n' \
     "$ENTRY_ID" \
     "$SESSION_ID" \
     "$TIMESTAMP" \
@@ -141,7 +159,56 @@ printf '{"id":"%s","session_id":"%s","timestamp":"%s","intent":"%s","skill_used"
     "$SKILL_USED" \
     "$TURN_COUNT" \
     "$COACHING_TRIGGERED" \
+    "$INTERVENTION_TYPE" \
     "$TAGS" \
     >> "$LOG_FILE"
+
+# ─── Trigger user model update every 5th interaction ─────────────────────────
+if [[ -n "${ANTHROPIC_API_KEY:-}" ]] && [[ -f "$UPDATE_SCRIPT" ]]; then
+    INTERACTION_COUNT=$(wc -l < "$LOG_FILE" 2>/dev/null | tr -d '[:space:]' || echo "0")
+    if (( INTERACTION_COUNT % 5 == 0 )); then
+        # Build payload for update script
+        USER_MODEL="{}"
+        if [[ -f "$USER_MODEL_FILE" ]]; then
+            USER_MODEL=$(cat "$USER_MODEL_FILE" 2>/dev/null || echo "{}")
+        fi
+
+        RECENT_INTERACTIONS=$(tail -20 "$LOG_FILE" 2>/dev/null | "$PYTHON_CMD" -c "
+import json, sys
+lines = sys.stdin.read().strip().split('\n')
+result = []
+for line in lines:
+    if line.strip():
+        try:
+            result.append(json.loads(line))
+        except:
+            pass
+print(json.dumps(result))
+" 2>/dev/null || echo "[]")
+
+        escape_for_json() {
+            local s="$1"
+            s="${s//\\/\\\\}"
+            s="${s//\"/\\\"}"
+            s="${s//$'\n'/\\n}"
+            s="${s//$'\r'/\\r}"
+            s="${s//$'\t'/\\t}"
+            printf '%s' "$s"
+        }
+
+        MSG_ESC=$(escape_for_json "$COACHING_MESSAGE")
+        SESSION_COACHING="{}"
+        if [[ "$COACHING_TRIGGERED" == "true" ]] && [[ "$INTERVENTION_TYPE" != "null" ]]; then
+            SESSION_COACHING=$(printf '{"type":%s,"message":"%s"}' "$INTERVENTION_TYPE" "$MSG_ESC")
+        fi
+
+        UPDATE_PAYLOAD=$(printf '{"user_model":%s,"recent_interactions":%s,"session_coaching":%s}' \
+            "$USER_MODEL" \
+            "$RECENT_INTERACTIONS" \
+            "$SESSION_COACHING")
+
+        printf '%s' "$UPDATE_PAYLOAD" | "$PYTHON_CMD" "$UPDATE_SCRIPT" &
+    fi
+fi
 
 exit 0

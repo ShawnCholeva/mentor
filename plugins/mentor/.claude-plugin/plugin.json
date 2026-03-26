@@ -1,7 +1,7 @@
 {
   "name": "mentor",
-  "description": "Inline prompt coaching system. Intercepts prompts before they reach Claude, fires heuristic coaching notes for vague or misrouted prompts, and logs interactions for pattern detection.",
-  "version": "1.3.1",
+  "description": "AI-powered inline coaching system. Uses Claude haiku to evaluate prompt quality against a configurable philosophy and persistent user model. Fires typed interventions (nudge, correction, challenge, reinforcement) and evolves its understanding of the user over time.",
+  "version": "2.0.0",
   "author": {
     "name": "Shawn Choleva"
   },

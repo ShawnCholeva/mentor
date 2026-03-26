@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# Stop hook — interaction logger for coaching system
+# Part of claude-mentor plugin
+#
+# Fires after every Claude response. Reads the session state written by
+# user-prompt-submit, counts turns from the transcript, and appends a
+# structured entry to ~/.claude/coaching/interactions.jsonl.
+# Always exits 0 — never disrupts Claude Code's normal shutdown flow.
+
+set -euo pipefail
+
+COACHING_DIR="${HOME}/.claude/coaching"
+LOG_FILE="${COACHING_DIR}/interactions.jsonl"
+
+mkdir -p "$COACHING_DIR"
+
+# ─── JSON parsing: python3 → python → silent exit ────────────────────────────
+PYTHON_CMD=""
+if command -v python3 &>/dev/null; then
+    PYTHON_CMD="python3"
+elif command -v python &>/dev/null; then
+    PYTHON_CMD="python"
+else
+    exit 0
+fi
+
+INPUT=$(cat)
+
+get_field() {
+    local field="$1"
+    printf '%s' "$INPUT" | "$PYTHON_CMD" -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    v = d.get('$field', '')
+    print(v if isinstance(v, str) else '')
+except:
+    print('')
+" 2>/dev/null || echo ""
+}
+
+SESSION_ID=$(get_field "session_id")
+TRANSCRIPT_PATH=$(get_field "transcript_path")
+
+[[ -z "$SESSION_ID" ]] && exit 0
+
+# ─── Read session state from user-prompt-submit hook ─────────────────────────
+STATE_FILE="${COACHING_DIR}/session-${SESSION_ID}.tmp"
+COACHING_TRIGGERED="false"
+TAGS="[]"
+TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
+
+if [[ -f "$STATE_FILE" ]]; then
+    STATE=$(cat "$STATE_FILE")
+    COACHING_TRIGGERED=$(printf '%s' "$STATE" | "$PYTHON_CMD" -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print('true' if d.get('coaching_triggered', False) else 'false')
+except:
+    print('false')
+" 2>/dev/null || echo "false")
+    TAGS=$(printf '%s' "$STATE" | "$PYTHON_CMD" -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    tags = d.get('tags', [])
+    print(json.dumps(tags))
+except:
+    print('[]')
+" 2>/dev/null || echo "[]")
+    rm -f "$STATE_FILE"
+fi
+
+# ─── Count user turns from transcript ────────────────────────────────────────
+TURN_COUNT=1
+if [[ -n "$TRANSCRIPT_PATH" ]] && [[ -f "$TRANSCRIPT_PATH" ]]; then
+    TURN_COUNT=$(grep -c '"role":"user"' "$TRANSCRIPT_PATH" 2>/dev/null || \
+                 grep -c '"role": "user"' "$TRANSCRIPT_PATH" 2>/dev/null || \
+                 echo "1")
+    [[ "$TURN_COUNT" -lt 1 ]] && TURN_COUNT=1
+fi
+
+# ─── Classify intent from transcript ─────────────────────────────────────────
+INTENT="unknown"
+SKILL_USED="null"
+if [[ -n "$TRANSCRIPT_PATH" ]] && [[ -f "$TRANSCRIPT_PATH" ]]; then
+    # Get last user message text
+    LAST_PROMPT=$(grep '"role":"user"\|"role": "user"' "$TRANSCRIPT_PATH" 2>/dev/null | \
+        tail -1 | "$PYTHON_CMD" -c "
+import json, sys, re
+try:
+    line = sys.stdin.read().strip()
+    d = json.loads(line)
+    # Handle different transcript formats
+    msg = d.get('message', d)
+    content = msg.get('content', '')
+    if isinstance(content, list):
+        text = ' '.join(c.get('text','') for c in content if isinstance(c,dict))
+    else:
+        text = str(content)
+    print(text[:500])
+except:
+    print('')
+" 2>/dev/null || echo "")
+
+    if [[ -n "$LAST_PROMPT" ]]; then
+        P_LOWER=$(echo "$LAST_PROMPT" | tr '[:upper:]' '[:lower:]')
+
+        # Detect skill used
+        if echo "$LAST_PROMPT" | grep -qE "^/discover"; then SKILL_USED='"/discover"'; INTENT="discover"
+        elif echo "$LAST_PROMPT" | grep -qE "^/design";   then SKILL_USED='"/design"';  INTENT="design"
+        elif echo "$LAST_PROMPT" | grep -qE "^/build";    then SKILL_USED='"/build"';   INTENT="build"
+        elif echo "$LAST_PROMPT" | grep -qE "^/deploy";   then SKILL_USED='"/deploy"';  INTENT="deploy"
+        elif echo "$LAST_PROMPT" | grep -qE "^/support";  then SKILL_USED='"/support"'; INTENT="support"
+        # Classify by content if no skill prefix
+        elif echo "$P_LOWER" | grep -qiE "(debug|error|traceback|not working|crash|bug)"; then INTENT="debug"
+        elif echo "$P_LOWER" | grep -qiE "(design|architect|plan|spec|requirements)";     then INTENT="design"
+        elif echo "$P_LOWER" | grep -qiE "(implement|build|create|add feature|write)";    then INTENT="build"
+        elif echo "$P_LOWER" | grep -qiE "(explore|understand|what is|how does|find)";    then INTENT="discover"
+        elif echo "$P_LOWER" | grep -qiE "(deploy|release|ci|pipeline|environment)";      then INTENT="deploy"
+        else INTENT="explore"
+        fi
+
+        # Override with vague if short
+        WORD_COUNT=$(echo "$LAST_PROMPT" | wc -w | tr -d '[:space:]')
+        [[ "$WORD_COUNT" -lt 6 ]] && INTENT="vague"
+    fi
+fi
+
+# ─── Generate entry ID ────────────────────────────────────────────────────────
+ENTRY_ID=$(uuidgen 2>/dev/null || \
+           cat /proc/sys/kernel/random/uuid 2>/dev/null || \
+           "$PYTHON_CMD" -c "import uuid; print(uuid.uuid4())" 2>/dev/null || \
+           echo "${SESSION_ID}-${TIMESTAMP}")
+
+# ─── Append log entry ─────────────────────────────────────────────────────────
+printf '{"id":"%s","session_id":"%s","timestamp":"%s","intent":"%s","skill_used":%s,"turn_count":%s,"coaching_triggered":%s,"coaching_action":null,"tags":%s}\n' \
+    "$ENTRY_ID" \
+    "$SESSION_ID" \
+    "$TIMESTAMP" \
+    "$INTENT" \
+    "$SKILL_USED" \
+    "$TURN_COUNT" \
+    "$COACHING_TRIGGERED" \
+    "$TAGS" \
+    >> "$LOG_FILE"
+
+exit 0

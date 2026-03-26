@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+# UserPromptSubmit hook — inline prompt coaching via additionalContext
+# Part of claude-mentor plugin
+#
+# Evaluates the user's prompt with heuristics before it reaches Claude.
+# On a high-confidence match, injects a coaching note as additionalContext
+# so Claude surfaces it at the top of its response.
+# Always exits 0 — never blocks a prompt (NFR-5).
+
+set -euo pipefail
+
+COACHING_DIR="${HOME}/.claude/coaching"
+CONFIG_FILE="${COACHING_DIR}/config.json"
+LOG_FILE="${COACHING_DIR}/interactions.jsonl"
+
+mkdir -p "$COACHING_DIR"
+
+# ─── Read stdin ───────────────────────────────────────────────────────────────
+INPUT=$(cat)
+
+# ─── JSON parsing: python3 → python → silent pass-through ────────────────────
+PYTHON_CMD=""
+if command -v python3 &>/dev/null; then
+    PYTHON_CMD="python3"
+elif command -v python &>/dev/null; then
+    PYTHON_CMD="python"
+else
+    exit 0
+fi
+
+get_field() {
+    local field="$1"
+    printf '%s' "$INPUT" | "$PYTHON_CMD" -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    v = d.get('$field', '')
+    print(v if isinstance(v, str) else '')
+except:
+    print('')
+" 2>/dev/null || echo ""
+}
+
+PROMPT=$(get_field "prompt")
+SESSION_ID=$(get_field "session_id")
+
+[[ -z "$PROMPT" ]] && exit 0
+
+# ─── Load settings (defaults if config missing) ───────────────────────────────
+ENABLED="true"
+MODE="chill"
+BOOTSTRAP_MIN=20
+
+if [[ -f "$CONFIG_FILE" ]]; then
+    _parse_config() {
+        printf '%s' "$(cat "$CONFIG_FILE")" | "$PYTHON_CMD" -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print(str(d.get('enabled', True)).lower())
+    print(d.get('mode', 'chill'))
+    print(d.get('bootstrap_min', 20))
+except:
+    print('true'); print('chill'); print(20)
+" 2>/dev/null || printf "true\nchill\n20\n"
+    }
+    IFS=$'\n' read -r ENABLED MODE BOOTSTRAP_MIN <<< "$(_parse_config)"
+fi
+
+[[ "$ENABLED" != "true" ]] && exit 0
+
+# ─── Count interactions (bootstrap gate for pattern-based checks) ─────────────
+INTERACTION_COUNT=0
+if [[ -f "$LOG_FILE" ]]; then
+    INTERACTION_COUNT=$(wc -l < "$LOG_FILE" 2>/dev/null | tr -d '[:space:]' || echo "0")
+fi
+
+# ─── Rate limiting: max 1 coaching per 3 consecutive prompts ─────────────────
+if [[ -f "$LOG_FILE" ]]; then
+    RECENT_COACHING=$(tail -3 "$LOG_FILE" 2>/dev/null | grep -c '"coaching_triggered":true' 2>/dev/null || true)
+    RECENT_COACHING="${RECENT_COACHING:-0}"
+    [[ "$RECENT_COACHING" -ge 1 ]] && exit 0
+fi
+
+# ─── Heuristic coaching engine ────────────────────────────────────────────────
+FEEDBACK=""
+TAGS=""
+WORD_COUNT=$(echo "$PROMPT" | wc -w | tr -d '[:space:]')
+PROMPT_LOWER=$(echo "$PROMPT" | tr '[:upper:]' '[:lower:]')
+
+# 1. Very short prompt (not a skill invocation)
+if [[ "$WORD_COUNT" -lt 6 ]] && ! echo "$PROMPT" | grep -qE "^/[a-z]"; then
+    FEEDBACK="Prompt is very short. Add: what you want, any constraints, and expected output format."
+    TAGS="vague"
+fi
+
+# 2. Vague starter phrases with no constraints
+if [[ -z "$FEEDBACK" ]] && echo "$PROMPT_LOWER" | grep -qE "^(help me|fix this|make it work|can you help|i need to|just (do|fix|make|build))"; then
+    if [[ "$WORD_COUNT" -lt 12 ]]; then
+        FEEDBACK="Prompt starts vague. Specify: what system/component, the desired behavior, and what success looks like."
+        TAGS="vague"
+    fi
+fi
+
+# 3. /build invoked for design/architecture work
+if [[ -z "$FEEDBACK" ]] && echo "$PROMPT" | grep -qE "^/build"; then
+    if echo "$PROMPT_LOWER" | grep -qiE "(architect|design a|write a spec|requirements|should we use|what approach|tradeoffs|what.*strategy|how should we)"; then
+        FEEDBACK="This looks like a design task. /design gives you architecture, requirements, and risk analysis first."
+        TAGS="skill_mismatch"
+    fi
+fi
+
+# 4. /design invoked for debugging/bugfix work
+if [[ -z "$FEEDBACK" ]] && echo "$PROMPT" | grep -qE "^/design"; then
+    if echo "$PROMPT_LOWER" | grep -qiE "(debug|fix.*error|not working|exception|crash|traceback|bug in|error:)"; then
+        FEEDBACK="This looks like a debugging task. /support is better suited here."
+        TAGS="skill_mismatch"
+    fi
+fi
+
+# 5. /build invoked for discovery/exploration
+if [[ -z "$FEEDBACK" ]] && echo "$PROMPT" | grep -qE "^/build"; then
+    if echo "$PROMPT_LOWER" | grep -qiE "^/build.*(understand|explore|how does|what is|find|look at|show me|explain|walk me through)"; then
+        FEEDBACK="This looks like an exploration task. /discover is better suited for understanding codebases and docs."
+        TAGS="skill_mismatch"
+    fi
+fi
+
+# 6. Pattern-based: repeated vague prompts in recent history
+if [[ -z "$FEEDBACK" ]] && [[ "$INTERACTION_COUNT" -ge "$BOOTSTRAP_MIN" ]] && [[ -f "$LOG_FILE" ]]; then
+    RECENT_VAGUE=$(tail -20 "$LOG_FILE" 2>/dev/null | grep -c '"vague"' 2>/dev/null || true)
+    RECENT_VAGUE="${RECENT_VAGUE:-0}"
+    if [[ "$RECENT_VAGUE" -ge 5 ]]; then
+        FEEDBACK="Pattern: recent prompts have often been vague, leading to extra back-and-forth. Try: goal + constraints + output format upfront."
+        TAGS="high_iteration"
+    fi
+fi
+
+# 7. Elite mode only: complex prompt with no output format specified
+if [[ -z "$FEEDBACK" ]] && [[ "$MODE" == "elite" ]] && [[ "$WORD_COUNT" -gt 15 ]]; then
+    if ! echo "$PROMPT_LOWER" | grep -qE "(output|format|return|respond with|as a |in the form|table|list|json|markdown|summary|step.by.step)"; then
+        FEEDBACK="No output format specified. Adding one (list, table, JSON, step-by-step) often improves response quality."
+        TAGS="missing_structure"
+    fi
+fi
+
+# No coaching triggered — pass through
+[[ -z "$FEEDBACK" ]] && exit 0
+
+# ─── Write session state for stop-logger ─────────────────────────────────────
+TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
+STATE_FILE="${COACHING_DIR}/session-${SESSION_ID}.tmp"
+printf '{"coaching_triggered":true,"tags":["%s"],"timestamp":"%s"}\n' "$TAGS" "$TIMESTAMP" > "$STATE_FILE"
+
+# ─── Build coaching message ───────────────────────────────────────────────────
+escape_for_json() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    printf '%s' "$s"
+}
+
+FEEDBACK_ESC=$(escape_for_json "$FEEDBACK")
+COACHING_MSG="<prompt-coaching-note>\\nBefore responding, share this coaching note with the user in 1-2 sentences, then proceed with your answer:\\n\\n\u26a0\ufe0f Prompt Coach: ${FEEDBACK_ESC}\\n</prompt-coaching-note>"
+
+# ─── Output hookSpecificOutput ────────────────────────────────────────────────
+printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "UserPromptSubmit",\n    "additionalContext": "%s"\n  }\n}\n' "$COACHING_MSG"
+
+exit 0

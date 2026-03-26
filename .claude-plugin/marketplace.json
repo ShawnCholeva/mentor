@@ -1,0 +1,26 @@
+{
+  "name": "claude-mentor",
+  "owner": {
+    "name": "Shawn Choleva"
+  },
+  "metadata": {
+    "description": "Inline prompt coaching for Claude Code — heuristic feedback before prompts are submitted, with interaction logging and behavioral pattern detection"
+  },
+  "plugins": [
+    {
+      "name": "claude-mentor",
+      "source": "./plugins/claude-mentor",
+      "description": "Inline prompt coaching system. Intercepts prompts before they reach Claude, fires heuristic coaching notes for vague or misrouted prompts, and logs interactions for pattern detection.",
+      "version": "1.0.0",
+      "license": "MIT",
+      "keywords": [
+        "coaching",
+        "prompt-quality",
+        "productivity",
+        "heuristics",
+        "logging"
+      ],
+      "category": "developer-experience"
+    }
+  ]
+}

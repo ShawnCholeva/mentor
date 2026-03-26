@@ -6,7 +6,7 @@ Mentor is an inline prompt coaching plugin for Claude Code. It watches every pro
 
 The moment you submit a prompt, Mentor evaluates it against a set of heuristics. If something looks off, it doesn't block your prompt — it slips a coaching note into the context Claude sees:
 
-> ⚠️ Mentor: Prompt is very short. Add: what you want, any constraints, and expected output format.
+> 💡 Mentor: Prompt is very short. Add: what you want, any constraints, and expected output format.
 
 Claude sees the note, surfaces it to you in a sentence or two, then proceeds with your request as normal. You get the feedback in context, right when it's useful, without any extra steps.
 

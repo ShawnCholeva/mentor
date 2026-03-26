@@ -1,7 +1,7 @@
 {
   "name": "mentor",
   "description": "Inline prompt coaching system. Intercepts prompts before they reach Claude, fires heuristic coaching notes for vague or misrouted prompts, and logs interactions for pattern detection.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": {
     "name": "Shawn Choleva"
   },

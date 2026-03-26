@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" user-prompt-submit",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/plugins/mentor/hooks/run-hook.cmd\" user-prompt-submit",
             "async": false,
             "timeout": 15
           }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" stop-logger",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/plugins/mentor/hooks/run-hook.cmd\" stop-logger",
             "async": true
           }
         ]

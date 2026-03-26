@@ -5,9 +5,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.ps1\" user-prompt-submit",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${CLAUDE_PLUGIN_ROOT}/plugins/mentor/hooks/run-hook.ps1\" user-prompt-submit",
             "async": false,
-            "timeout": 8
+            "timeout": 15
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.ps1\" stop-logger",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${CLAUDE_PLUGIN_ROOT}/plugins/mentor/hooks/run-hook.ps1\" stop-logger",
             "async": true
           }
         ]

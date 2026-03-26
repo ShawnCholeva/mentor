@@ -133,7 +133,6 @@ Keep the report concise. Focus on actionable patterns, not exhaustive statistics
 ## Step 5 — Suggest next action
 
 End with one of:
-- If API key not configured: "Run `/mentor status` to check your API key — coaching requires `ANTHROPIC_API_KEY` to be set."
 - If Mentor trigger rate is high: "Run `/mentor chill` to reduce intervention frequency."
 - If turn count is high and vagueness is the top tag: "Your prompts may benefit from more upfront structure — goal, constraints, output format."
 - If user model weaknesses are stale (last intervention_history entry is old): "The user model may be stale. Keep using Claude normally and it will update every 5 interactions."

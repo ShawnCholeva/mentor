@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # UserPromptSubmit hook — AI-powered prompt coaching via additionalContext
-# Part of mentor plugin (v3.0)
+# Part of mentor plugin (v3.1)
 #
 # Evaluates the user's prompt with Claude Haiku before it reaches Claude.
 # On a high-confidence match, injects a coaching note as additionalContext.
 # Always exits 0 — never blocks a prompt.
 
 set -euo pipefail
+
+# Skip if this is an internal mentor call (prevents recursive evaluation)
+[[ -n "${MENTOR_INTERNAL:-}" ]] && exit 0
 
 COACHING_DIR="${HOME}/.claude/coaching"
 CONFIG_FILE="${COACHING_DIR}/config.json"
@@ -61,10 +64,6 @@ if [[ -n "$SESSION_ID" ]] && [[ -f "$STATE_FILE" ]]; then
     [[ "$ELAPSED" -lt 30 ]] && exit 0
 fi
 
-# ─── Guard: API key required ──────────────────────────────────────────────────
-MENTOR_API_KEY="${MENTOR_API_KEY:-}"
-[[ -z "$MENTOR_API_KEY" ]] && exit 0
-
 # ─── Guard: evaluate script must exist ───────────────────────────────────────
 [[ ! -f "$EVALUATE_SCRIPT" ]] && exit 0
 
@@ -91,8 +90,7 @@ PAYLOAD=$("$JQ" -n \
     --arg     mode       "$MODE" \
     --arg     philosophy "$PHILOSOPHY" \
     --argjson user_model "$USER_MODEL" \
-    --arg     api_key    "$MENTOR_API_KEY" \
-    '{prompt: $prompt, mode: $mode, philosophy: $philosophy, user_model: $user_model, api_key: $api_key}' \
+    '{prompt: $prompt, mode: $mode, philosophy: $philosophy, user_model: $user_model}' \
     2>/dev/null) || exit 0
 
 JUDGMENT=$(printf '%s' "$PAYLOAD" | timeout 6 bash "$EVALUATE_SCRIPT" 2>/dev/null \

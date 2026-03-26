@@ -18,7 +18,7 @@ Configure the inline prompt coaching system.
 /mentor elite              — more interventions (fires on subtler issues too)
 /mentor on                 — enable coaching
 /mentor off                — disable coaching
-/mentor status             — show current settings, API key state, and log stats
+/mentor status             — show current settings and log stats
 /mentor bootstrap <n>      — set minimum interactions before pattern detection fires (default: 20)
 /mentor philosophy         — show your coaching philosophy and how to edit it
 /mentor model              — display your current user model (strengths, weaknesses, focus)
@@ -92,7 +92,7 @@ Confirm: "Bootstrap minimum set to **N**. Pattern detection fires after N intera
 
 ### `status`
 
-Read `~/.claude/coaching/config.json`, `~/.claude/coaching/interactions.jsonl`, `~/.claude/coaching/user-model.json`, and check for `ANTHROPIC_API_KEY` in the environment, then report:
+Read `~/.claude/coaching/config.json`, `~/.claude/coaching/interactions.jsonl`, `~/.claude/coaching/user-model.json`, then report:
 
 ```
 ## Coaching Status
@@ -100,7 +100,6 @@ Read `~/.claude/coaching/config.json`, `~/.claude/coaching/interactions.jsonl`, 
 Enabled: [yes / no]
 Mode: [chill / elite]
 Bootstrap minimum: [N] interactions
-API key: [configured / NOT CONFIGURED — coaching will not fire]
 Philosophy: [loaded / not found — run /mentor philosophy for details]
 
 ### User Model
@@ -117,8 +116,6 @@ Intervention history: [N entries]
 
 Run /mentor-recap for a full behavioral analysis.
 ```
-
-If the API key is not set, prominently note: "⚠️ ANTHROPIC_API_KEY is not set. Coaching requires the Anthropic Python SDK and a valid API key. Set it in your shell profile or Claude Code environment."
 
 If the log file doesn't exist yet: "No interactions logged yet. The coaching system activates automatically on your next prompt."
 

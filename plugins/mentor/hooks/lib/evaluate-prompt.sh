@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# evaluate-prompt.sh — Prompt evaluator using curl + jq (replaces evaluate-prompt.py)
+# evaluate-prompt.sh — Prompt evaluator using claude -p
 #
-# Input:  JSON via stdin {prompt, mode, philosophy, user_model, api_key}
+# Input:  JSON via stdin {prompt, mode, philosophy, user_model}
 # Output: JSON judgment  {intervene: bool, [type, message]}
 # Always exits 0. On any error outputs {"intervene":false}.
 
@@ -20,9 +20,8 @@ PROMPT=$(      echo "$INPUT" | "$JQ" -r '.prompt      // ""'      2>/dev/null ||
 MODE=$(         echo "$INPUT" | "$JQ" -r '.mode        // "chill"' 2>/dev/null || echo "chill")
 PHILOSOPHY=$(   echo "$INPUT" | "$JQ" -r '.philosophy  // ""'      2>/dev/null || echo "")
 USER_MODEL=$(   echo "$INPUT" | "$JQ" -c '.user_model  // {}'      2>/dev/null || echo "{}")
-API_KEY=$(      echo "$INPUT" | "$JQ" -r '.api_key     // ""'      2>/dev/null || echo "")
 
-[[ -z "$PROMPT" || -z "$API_KEY" ]] && { echo "$FALLBACK"; exit 0; }
+[[ -z "$PROMPT" ]] && { echo "$FALLBACK"; exit 0; }
 
 # ─── Select model ─────────────────────────────────────────────────────────────
 if [[ "$MODE" == "elite" ]]; then
@@ -92,52 +91,15 @@ USER_MESSAGE="Evaluate this prompt:
 ${PROMPT_TRUNC}
 ---"
 
-# ─── Build API request (jq handles all escaping) ──────────────────────────────
-REQUEST=$("$JQ" -n \
-    --arg model   "$MODEL" \
-    --arg system  "$SYSTEM_PROMPT" \
-    --arg content "$USER_MESSAGE" \
-    '{
-        model:      $model,
-        max_tokens: 150,
-        system:     $system,
-        messages:   [{role: "user", content: $content}]
-    }' 2>/dev/null) || { echo "$FALLBACK"; exit 0; }
+# ─── Call Claude via CLI ─────────────────────────────────────────────────────
+TEXT=$(MENTOR_INTERNAL=1 timeout 5 claude -p \
+    --model "$MODEL" \
+    --system-prompt "$SYSTEM_PROMPT" \
+    --no-session-persistence \
+    --tools "" \
+    "$USER_MESSAGE" 2>/dev/null) || true
 
-# ─── Detect HTTP client ───────────────────────────────────────────────────────
-HTTP_CMD=""
-command -v curl &>/dev/null && HTTP_CMD="curl"
-[[ -z "$HTTP_CMD" ]] && command -v wget &>/dev/null && HTTP_CMD="wget"
-[[ -z "$HTTP_CMD" ]] && { echo "$FALLBACK"; exit 0; }
-
-# ─── Call API (write request to temp file to avoid shell quoting issues) ─────
-TMPFILE=$(mktemp /tmp/mentor-eval-XXXXXX.json)
-printf '%s' "$REQUEST" > "$TMPFILE"
-
-RESPONSE=""
-if [[ "$HTTP_CMD" == "curl" ]]; then
-    RESPONSE=$(curl -s --max-time 5 \
-        -X POST "https://api.anthropic.com/v1/messages" \
-        -H "x-api-key: ${API_KEY}" \
-        -H "anthropic-version: 2023-06-01" \
-        -H "content-type: application/json" \
-        --data-binary "@${TMPFILE}" 2>/dev/null) || true
-else
-    RESPONSE=$(wget -qO- --timeout=5 \
-        --header="x-api-key: ${API_KEY}" \
-        --header="anthropic-version: 2023-06-01" \
-        --header="content-type: application/json" \
-        --post-file="$TMPFILE" \
-        "https://api.anthropic.com/v1/messages" 2>/dev/null) || true
-fi
-
-rm -f "$TMPFILE"
-
-[[ -z "$RESPONSE" ]] && { echo "$FALLBACK"; exit 0; }
-
-# ─── Extract text from API response ──────────────────────────────────────────
-TEXT=$(echo "$RESPONSE" | "$JQ" -r '.content[0].text // ""' 2>/dev/null) || { echo "$FALLBACK"; exit 0; }
-[[ -z "$TEXT" || "$TEXT" == "null" ]] && { echo "$FALLBACK"; exit 0; }
+[[ -z "$TEXT" ]] && { echo "$FALLBACK"; exit 0; }
 
 # Strip markdown fences if present
 if [[ "$TEXT" == '```'* ]]; then

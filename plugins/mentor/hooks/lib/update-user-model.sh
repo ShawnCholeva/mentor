@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# update-user-model.sh — Updates the persistent user model using curl + jq
-#                        (replaces update-user-model.py)
+# update-user-model.sh — Updates the persistent user model using claude -p
 #
-# Input:  JSON via stdin {user_model, recent_interactions, session_coaching, api_key}
+# Input:  JSON via stdin {user_model, recent_interactions, session_coaching}
 # Output: none (atomically writes ~/.claude/coaching/user-model.json)
 # Always exits 0. On any error, leaves existing file unchanged.
 
@@ -21,11 +20,10 @@ INPUT=$(cat)
 USER_MODEL=$(         echo "$INPUT" | "$JQ" -c '.user_model          // {}' 2>/dev/null || echo "{}")
 RECENT_INTERACTIONS=$(echo "$INPUT" | "$JQ" -c '.recent_interactions // []' 2>/dev/null || echo "[]")
 SESSION_COACHING=$(   echo "$INPUT" | "$JQ" -c '.session_coaching     // {}' 2>/dev/null || echo "{}")
-API_KEY=$(            echo "$INPUT" | "$JQ" -r '.api_key              // ""' 2>/dev/null || echo "")
 
-# Skip if no interactions or no key
+# Skip if no interactions
 INTERACTION_COUNT=$(echo "$RECENT_INTERACTIONS" | "$JQ" 'length' 2>/dev/null || echo "0")
-[[ "$INTERACTION_COUNT" -eq 0 || -z "$API_KEY" ]] && exit 0
+[[ "$INTERACTION_COUNT" -eq 0 ]] && exit 0
 
 # ─── Build prompt content ─────────────────────────────────────────────────────
 CURRENT_MODEL_STR=$(echo "$USER_MODEL"          | "$JQ" '.' 2>/dev/null || echo "{}")
@@ -57,50 +55,15 @@ ${COACHING_STR}
 
 Produce the updated profile JSON."
 
-# ─── Build API request ────────────────────────────────────────────────────────
-REQUEST=$("$JQ" -n \
-    --arg system  "$SYSTEM_PROMPT" \
-    --arg content "$USER_MESSAGE" \
-    '{
-        model:      "claude-haiku-4-5-20251001",
-        max_tokens: 600,
-        system:     $system,
-        messages:   [{role: "user", content: $content}]
-    }' 2>/dev/null) || exit 0
+# ─── Call Claude via CLI ─────────────────────────────────────────────────────
+TEXT=$(MENTOR_INTERNAL=1 timeout 10 claude -p \
+    --model "claude-haiku-4-5-20251001" \
+    --system-prompt "$SYSTEM_PROMPT" \
+    --no-session-persistence \
+    --tools "" \
+    "$USER_MESSAGE" 2>/dev/null) || true
 
-# ─── Detect HTTP client ───────────────────────────────────────────────────────
-HTTP_CMD=""
-command -v curl &>/dev/null && HTTP_CMD="curl"
-[[ -z "$HTTP_CMD" ]] && command -v wget &>/dev/null && HTTP_CMD="wget"
-[[ -z "$HTTP_CMD" ]] && exit 0
-
-# ─── Call API ────────────────────────────────────────────────────────────────
-TMPFILE=$(mktemp /tmp/mentor-update-XXXXXX.json)
-printf '%s' "$REQUEST" > "$TMPFILE"
-
-RESPONSE=""
-if [[ "$HTTP_CMD" == "curl" ]]; then
-    RESPONSE=$(curl -s --max-time 10 \
-        -X POST "https://api.anthropic.com/v1/messages" \
-        -H "x-api-key: ${API_KEY}" \
-        -H "anthropic-version: 2023-06-01" \
-        -H "content-type: application/json" \
-        --data-binary "@${TMPFILE}" 2>/dev/null) || true
-else
-    RESPONSE=$(wget -qO- --timeout=10 \
-        --header="x-api-key: ${API_KEY}" \
-        --header="anthropic-version: 2023-06-01" \
-        --header="content-type: application/json" \
-        --post-file="$TMPFILE" \
-        "https://api.anthropic.com/v1/messages" 2>/dev/null) || true
-fi
-
-rm -f "$TMPFILE"
-[[ -z "$RESPONSE" ]] && exit 0
-
-# ─── Extract and parse response ───────────────────────────────────────────────
-TEXT=$(echo "$RESPONSE" | "$JQ" -r '.content[0].text // ""' 2>/dev/null) || exit 0
-[[ -z "$TEXT" || "$TEXT" == "null" ]] && exit 0
+[[ -z "$TEXT" ]] && exit 0
 
 # Strip markdown fences if present
 if [[ "$TEXT" == '```'* ]]; then

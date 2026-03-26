@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Stop hook — interaction logger for coaching system
-# Part of mentor plugin (v3.0)
+# Part of mentor plugin (v3.1)
 #
 # Fires after every Claude response. Reads session state written by
 # user-prompt-submit, counts turns from the transcript, and appends a
@@ -9,6 +9,9 @@
 # Always exits 0 — never disrupts Claude Code's normal shutdown flow.
 
 set -euo pipefail
+
+# Skip if this is an internal mentor call (prevents recursive logging)
+[[ -n "${MENTOR_INTERNAL:-}" ]] && exit 0
 
 COACHING_DIR="${HOME}/.claude/coaching"
 LOG_FILE="${COACHING_DIR}/interactions.jsonl"
@@ -115,8 +118,7 @@ ENTRY_ID=$(uuidgen 2>/dev/null || \
     }' >> "$LOG_FILE" 2>/dev/null || true
 
 # ─── Trigger user model update every 5th interaction ─────────────────────────
-MENTOR_API_KEY="${MENTOR_API_KEY:-}"
-if [[ -n "$MENTOR_API_KEY" ]] && [[ -f "$UPDATE_SCRIPT" ]]; then
+if [[ -f "$UPDATE_SCRIPT" ]]; then
     INTERACTION_COUNT=$(wc -l < "$LOG_FILE" 2>/dev/null | tr -d '[:space:]' || echo "0")
     if (( INTERACTION_COUNT % 5 == 0 )); then
         USER_MODEL="{}"
@@ -137,8 +139,7 @@ if [[ -n "$MENTOR_API_KEY" ]] && [[ -f "$UPDATE_SCRIPT" ]]; then
             --argjson user_model          "$USER_MODEL" \
             --argjson recent_interactions "$RECENT_INTERACTIONS" \
             --argjson session_coaching    "$SESSION_COACHING" \
-            --arg     api_key             "$MENTOR_API_KEY" \
-            '{user_model: $user_model, recent_interactions: $recent_interactions, session_coaching: $session_coaching, api_key: $api_key}' \
+            '{user_model: $user_model, recent_interactions: $recent_interactions, session_coaching: $session_coaching}' \
             2>/dev/null) || true
 
         [[ -n "$UPDATE_PAYLOAD" ]] && printf '%s' "$UPDATE_PAYLOAD" | bash "$UPDATE_SCRIPT" &

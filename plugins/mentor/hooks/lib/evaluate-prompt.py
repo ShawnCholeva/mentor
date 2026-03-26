@@ -30,6 +30,7 @@ def main():
     mode = payload.get("mode", "chill")
     philosophy = payload.get("philosophy", "").strip()
     user_model_raw = payload.get("user_model", "{}")
+    api_key = payload.get("api_key", "").strip()
 
     if not prompt:
         print(FALLBACK)
@@ -99,7 +100,7 @@ or
 
     try:
         model = "claude-sonnet-4-6" if mode == "elite" else "claude-haiku-4-5-20251001"
-        client = anthropic.Anthropic(timeout=5.0)
+        client = anthropic.Anthropic(api_key=api_key or None, timeout=5.0)
         response = client.messages.create(
             model=model,
             max_tokens=150,

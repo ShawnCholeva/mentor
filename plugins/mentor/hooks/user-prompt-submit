@@ -111,7 +111,9 @@ except:
 fi
 
 # ─── Guard: API key required ──────────────────────────────────────────────────
-[[ -z "${ANTHROPIC_API_KEY:-}" ]] && exit 0
+# Use MENTOR_API_KEY to avoid conflicting with Claude Code's own auth detection.
+MENTOR_API_KEY="${MENTOR_API_KEY:-}"
+[[ -z "$MENTOR_API_KEY" ]] && exit 0
 
 # ─── Guard: evaluate script must exist ────────────────────────────────────────
 [[ ! -f "$EVALUATE_SCRIPT" ]] && exit 0
@@ -151,11 +153,13 @@ escape_for_json() {
 PROMPT_ESC=$(escape_for_json "$PROMPT")
 PHILOSOPHY_ESC=$(escape_for_json "$PHILOSOPHY")
 
-PAYLOAD=$(printf '{"prompt":"%s","mode":"%s","philosophy":"%s","user_model":%s}' \
+MENTOR_API_KEY_ESC=$(escape_for_json "$MENTOR_API_KEY")
+PAYLOAD=$(printf '{"prompt":"%s","mode":"%s","philosophy":"%s","user_model":%s,"api_key":"%s"}' \
     "$PROMPT_ESC" \
     "$MODE" \
     "$PHILOSOPHY_ESC" \
-    "$USER_MODEL")
+    "$USER_MODEL" \
+    "$MENTOR_API_KEY_ESC")
 
 # ─── Call evaluate-prompt.py (6s timeout) ─────────────────────────────────────
 JUDGMENT=$(printf '%s' "$PAYLOAD" | timeout 6 "$PYTHON_CMD" "$EVALUATE_SCRIPT" 2>/dev/null || echo '{"intervene":false}')

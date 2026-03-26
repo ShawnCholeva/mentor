@@ -164,7 +164,8 @@ printf '{"id":"%s","session_id":"%s","timestamp":"%s","intent":"%s","skill_used"
     >> "$LOG_FILE"
 
 # ─── Trigger user model update every 5th interaction ─────────────────────────
-if [[ -n "${ANTHROPIC_API_KEY:-}" ]] && [[ -f "$UPDATE_SCRIPT" ]]; then
+MENTOR_API_KEY="${MENTOR_API_KEY:-}"
+if [[ -n "$MENTOR_API_KEY" ]] && [[ -f "$UPDATE_SCRIPT" ]]; then
     INTERACTION_COUNT=$(wc -l < "$LOG_FILE" 2>/dev/null | tr -d '[:space:]' || echo "0")
     if (( INTERACTION_COUNT % 5 == 0 )); then
         # Build payload for update script
@@ -202,10 +203,12 @@ print(json.dumps(result))
             SESSION_COACHING=$(printf '{"type":%s,"message":"%s"}' "$INTERVENTION_TYPE" "$MSG_ESC")
         fi
 
-        UPDATE_PAYLOAD=$(printf '{"user_model":%s,"recent_interactions":%s,"session_coaching":%s}' \
+        MENTOR_API_KEY_ESC=$(escape_for_json "$MENTOR_API_KEY")
+        UPDATE_PAYLOAD=$(printf '{"user_model":%s,"recent_interactions":%s,"session_coaching":%s,"api_key":"%s"}' \
             "$USER_MODEL" \
             "$RECENT_INTERACTIONS" \
-            "$SESSION_COACHING")
+            "$SESSION_COACHING" \
+            "$MENTOR_API_KEY_ESC")
 
         printf '%s' "$UPDATE_PAYLOAD" | "$PYTHON_CMD" "$UPDATE_SCRIPT" &
     fi

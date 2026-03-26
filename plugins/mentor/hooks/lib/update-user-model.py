@@ -42,6 +42,7 @@ def main():
     user_model = payload.get("user_model", EMPTY_MODEL)
     recent_interactions = payload.get("recent_interactions", [])
     session_coaching = payload.get("session_coaching", {})
+    api_key = payload.get("api_key", "").strip()
 
     if not recent_interactions:
         return
@@ -81,7 +82,7 @@ Latest session coaching:
 Produce the updated profile JSON."""
 
     try:
-        client = anthropic.Anthropic(timeout=10.0)
+        client = anthropic.Anthropic(api_key=api_key or None, timeout=10.0)
         response = client.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=600,

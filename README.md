@@ -14,6 +14,14 @@ After enough interactions are logged (20 by default), Mentor also starts watchin
 
 Everything is logged to `~/.claude/coaching/interactions.jsonl`.
 
+## Installation
+
+```bash
+/plugin install ShawnCholeva/mentor
+```
+
+Start a new session after installing — the coaching hooks activate automatically, no configuration needed.
+
 ## What it catches
 
 **In both modes:**

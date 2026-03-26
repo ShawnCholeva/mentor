@@ -133,7 +133,7 @@ escape_for_json() {
 }
 
 FEEDBACK_ESC=$(escape_for_json "$FEEDBACK")
-COACHING_MSG="<prompt-coaching-note>\\nBefore responding, share this coaching note with the user in 1-2 sentences, then proceed with your answer:\\n\\n\ud83d\udca1 Mentor: ${FEEDBACK_ESC}\\n</prompt-coaching-note>"
+COACHING_MSG="<prompt-coaching-note>\\nBefore responding, output this exact line verbatim, then proceed with your answer:\\n\\n\ud83d\udca1 Mentor: ${FEEDBACK_ESC}\\n</prompt-coaching-note>"
 
 # ─── Output hookSpecificOutput ────────────────────────────────────────────────
 printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "UserPromptSubmit",\n    "additionalContext": "%s"\n  }\n}\n' "$COACHING_MSG"

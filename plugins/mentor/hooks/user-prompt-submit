@@ -93,7 +93,7 @@ PAYLOAD=$("$JQ" -n \
     '{prompt: $prompt, mode: $mode, philosophy: $philosophy, user_model: $user_model}' \
     2>/dev/null) || exit 0
 
-JUDGMENT=$(printf '%s' "$PAYLOAD" | timeout 6 bash "$EVALUATE_SCRIPT" 2>/dev/null \
+JUDGMENT=$(printf '%s' "$PAYLOAD" | timeout 12 bash "$EVALUATE_SCRIPT" 2>/dev/null \
     || echo '{"intervene":false}')
 
 # ─── Parse judgment ───────────────────────────────────────────────────────────

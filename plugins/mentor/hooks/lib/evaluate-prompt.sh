@@ -92,12 +92,10 @@ ${PROMPT_TRUNC}
 ---"
 
 # ─── Call Claude via CLI ─────────────────────────────────────────────────────
-TEXT=$(MENTOR_INTERNAL=1 timeout 5 claude -p \
+TEXT=$(printf '%s' "$USER_MESSAGE" | MENTOR_INTERNAL=1 timeout 10 claude -p \
     --model "$MODEL" \
     --system-prompt "$SYSTEM_PROMPT" \
-    --no-session-persistence \
-    --tools "" \
-    "$USER_MESSAGE" 2>/dev/null) || true
+    --no-session-persistence 2>/dev/null) || true
 
 [[ -z "$TEXT" ]] && { echo "$FALLBACK"; exit 0; }
 

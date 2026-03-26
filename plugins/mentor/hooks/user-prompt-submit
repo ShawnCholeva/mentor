@@ -1,55 +1,40 @@
 #!/usr/bin/env bash
 # UserPromptSubmit hook — AI-powered prompt coaching via additionalContext
-# Part of mentor plugin (v2.0)
+# Part of mentor plugin (v3.0)
 #
-# Evaluates the user's prompt with Claude haiku before it reaches Claude.
-# On a high-confidence match, injects a coaching note as additionalContext
-# so Claude surfaces it at the top of its response.
-# Always exits 0 — never blocks a prompt (NFR-5).
+# Evaluates the user's prompt with Claude Haiku before it reaches Claude.
+# On a high-confidence match, injects a coaching note as additionalContext.
+# Always exits 0 — never blocks a prompt.
 
 set -euo pipefail
 
 COACHING_DIR="${HOME}/.claude/coaching"
 CONFIG_FILE="${COACHING_DIR}/config.json"
-LOG_FILE="${COACHING_DIR}/interactions.jsonl"
 PHILOSOPHY_FILE="${COACHING_DIR}/philosophy.md"
 USER_MODEL_FILE="${COACHING_DIR}/user-model.json"
+WARNED_FLAG="${COACHING_DIR}/.jq-missing-warned"
 
-# Resolve script directory to find lib/ scripts
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULTS_DIR="$(cd "$SCRIPT_DIR/../defaults" && pwd 2>/dev/null || echo "")"
-EVALUATE_SCRIPT="${SCRIPT_DIR}/lib/evaluate-prompt.py"
+DEFAULTS_DIR="$(cd "${SCRIPT_DIR}/../defaults" && pwd 2>/dev/null || echo "")"
+EVALUATE_SCRIPT="${SCRIPT_DIR}/lib/evaluate-prompt.sh"
 
 mkdir -p "$COACHING_DIR"
 
-# ─── JSON parsing: python3 → python → silent pass-through ────────────────────
-PYTHON_CMD=""
-if command -v python3 &>/dev/null; then
-    PYTHON_CMD="python3"
-elif command -v python &>/dev/null; then
-    PYTHON_CMD="python"
-else
+# ─── Resolve jq ───────────────────────────────────────────────────────────────
+JQ=$(command -v jq 2>/dev/null || echo "${COACHING_DIR}/bin/jq")
+if [[ ! -x "$JQ" ]]; then
+    if [[ ! -f "$WARNED_FLAG" ]]; then
+        echo "[mentor] jq not found — run install.sh to enable coaching" >&2
+        touch "$WARNED_FLAG" 2>/dev/null || true
+    fi
     exit 0
 fi
 
 # ─── Read stdin ───────────────────────────────────────────────────────────────
 INPUT=$(cat)
 
-get_field() {
-    local field="$1"
-    printf '%s' "$INPUT" | "$PYTHON_CMD" -c "
-import json, sys
-try:
-    d = json.load(sys.stdin)
-    v = d.get('$field', '')
-    print(v if isinstance(v, str) else '')
-except:
-    print('')
-" 2>/dev/null || echo ""
-}
-
-PROMPT=$(get_field "prompt")
-SESSION_ID=$(get_field "session_id")
+PROMPT=$(     echo "$INPUT" | "$JQ" -r '.prompt     // ""' 2>/dev/null || echo "")
+SESSION_ID=$( echo "$INPUT" | "$JQ" -r '.session_id // ""' 2>/dev/null || echo "")
 
 [[ -z "$PROMPT" ]] && exit 0
 
@@ -59,154 +44,85 @@ MODE="chill"
 BOOTSTRAP_MIN=20
 
 if [[ -f "$CONFIG_FILE" ]]; then
-    _parse_config() {
-        printf '%s' "$(cat "$CONFIG_FILE")" | "$PYTHON_CMD" -c "
-import json, sys
-try:
-    d = json.load(sys.stdin)
-    print(str(d.get('enabled', True)).lower())
-    print(d.get('mode', 'chill'))
-    print(d.get('bootstrap_min', 20))
-except:
-    print('true'); print('chill'); print(20)
-" 2>/dev/null || printf "true\nchill\n20\n"
-    }
-    IFS=$'\n' read -r ENABLED MODE BOOTSTRAP_MIN <<< "$(_parse_config)"
+    ENABLED=$(     "$JQ" -r 'if .enabled == false then "false" else "true" end' "$CONFIG_FILE" 2>/dev/null || echo "true")
+    MODE=$(        "$JQ" -r '.mode          // "chill"' "$CONFIG_FILE" 2>/dev/null || echo "chill")
+    BOOTSTRAP_MIN=$("$JQ" -r '.bootstrap_min // 20'    "$CONFIG_FILE" 2>/dev/null || echo "20")
 fi
 
 [[ "$ENABLED" != "true" ]] && exit 0
 
-# ─── Guard: skill invocations — never coach on /command prompts ───────────────
-if echo "$PROMPT" | grep -qE "^/[a-z]"; then
-    exit 0
-fi
+# ─── Guard: skill invocations ─────────────────────────────────────────────────
+echo "$PROMPT" | grep -qE "^/[a-z]" && exit 0
 
 # ─── Guard: conversational affirmations ───────────────────────────────────────
 PROMPT_TRIMMED=$(echo "$PROMPT" | tr '[:upper:]' '[:lower:]' | tr -d '[:punct:]' | xargs)
 AFFIRMATIONS="^(yes|no|ok|okay|sure|yep|nope|yup|nah|agreed|correct|exactly|right|proceed|continue|go ahead|do it|sounds good|looks good|make it so|that works|perfect|great|fine|done|got it)$"
-if echo "$PROMPT_TRIMMED" | grep -qiE "$AFFIRMATIONS"; then
-    exit 0
-fi
+echo "$PROMPT_TRIMMED" | grep -qiE "$AFFIRMATIONS" && exit 0
 
 # ─── Guard: per-session cooldown (30s) ────────────────────────────────────────
-STATE_FILE_EARLY="${COACHING_DIR}/session-${SESSION_ID}.tmp"
-if [[ -f "$STATE_FILE_EARLY" ]]; then
-    LAST_TS=$(printf '%s' "$(cat "$STATE_FILE_EARLY")" | "$PYTHON_CMD" -c "
-import json, sys, datetime
-try:
-    d = json.load(sys.stdin)
-    ts = d.get('timestamp', '')
-    if ts:
-        last = datetime.datetime.fromisoformat(ts.replace('Z', '+00:00'))
-        now = datetime.datetime.now(datetime.timezone.utc)
-        print(int((now - last).total_seconds()))
-    else:
-        print(9999)
-except:
-    print(9999)
-" 2>/dev/null || echo "9999")
-    if [[ "$LAST_TS" -lt 30 ]]; then
-        exit 0
-    fi
+STATE_FILE="${COACHING_DIR}/session-${SESSION_ID}.tmp"
+if [[ -n "$SESSION_ID" ]] && [[ -f "$STATE_FILE" ]]; then
+    LAST_TS=$("$JQ" -r '.timestamp // 0' "$STATE_FILE" 2>/dev/null || echo "0")
+    NOW_EPOCH=$(date +%s)
+    ELAPSED=$(( NOW_EPOCH - LAST_TS ))
+    [[ "$ELAPSED" -lt 30 ]] && exit 0
 fi
 
 # ─── Guard: API key required ──────────────────────────────────────────────────
-# Use MENTOR_API_KEY to avoid conflicting with Claude Code's own auth detection.
 MENTOR_API_KEY="${MENTOR_API_KEY:-}"
 [[ -z "$MENTOR_API_KEY" ]] && exit 0
 
-# ─── Guard: evaluate script must exist ────────────────────────────────────────
+# ─── Guard: evaluate script must exist ───────────────────────────────────────
 [[ ! -f "$EVALUATE_SCRIPT" ]] && exit 0
 
-# ─── Bootstrap: seed philosophy.md if missing ────────────────────────────────
+# ─── Bootstrap: seed defaults if missing ─────────────────────────────────────
 if [[ ! -f "$PHILOSOPHY_FILE" ]] && [[ -n "$DEFAULTS_DIR" ]] && [[ -f "${DEFAULTS_DIR}/philosophy.md" ]]; then
     cp "${DEFAULTS_DIR}/philosophy.md" "$PHILOSOPHY_FILE" 2>/dev/null || true
 fi
 
-# ─── Bootstrap: seed user-model.json if missing ──────────────────────────────
 if [[ ! -f "$USER_MODEL_FILE" ]]; then
-    printf '{"strengths":[],"weaknesses":[],"current_focus":"","recent_progress":"","intervention_history":[]}\n' > "$USER_MODEL_FILE" 2>/dev/null || true
+    printf '{"strengths":[],"weaknesses":[],"current_focus":"","recent_progress":"","intervention_history":[]}\n' \
+        > "$USER_MODEL_FILE" 2>/dev/null || true
 fi
 
 # ─── Load philosophy and user model ──────────────────────────────────────────
 PHILOSOPHY=""
-if [[ -f "$PHILOSOPHY_FILE" ]]; then
-    PHILOSOPHY=$(cat "$PHILOSOPHY_FILE" 2>/dev/null || echo "")
-fi
+[[ -f "$PHILOSOPHY_FILE" ]] && PHILOSOPHY=$(cat "$PHILOSOPHY_FILE" 2>/dev/null || echo "")
 
 USER_MODEL="{}"
-if [[ -f "$USER_MODEL_FILE" ]]; then
-    USER_MODEL=$(cat "$USER_MODEL_FILE" 2>/dev/null || echo "{}")
-fi
+[[ -f "$USER_MODEL_FILE" ]] && USER_MODEL=$(cat "$USER_MODEL_FILE" 2>/dev/null || echo "{}")
 
-# ─── Build JSON payload for evaluate-prompt.py ───────────────────────────────
-escape_for_json() {
-    local s="$1"
-    s="${s//\\/\\\\}"
-    s="${s//\"/\\\"}"
-    s="${s//$'\n'/\\n}"
-    s="${s//$'\r'/\\r}"
-    s="${s//$'\t'/\\t}"
-    printf '%s' "$s"
-}
+# ─── Build payload and call evaluate-prompt.sh ───────────────────────────────
+PAYLOAD=$("$JQ" -n \
+    --arg     prompt     "$PROMPT" \
+    --arg     mode       "$MODE" \
+    --arg     philosophy "$PHILOSOPHY" \
+    --argjson user_model "$USER_MODEL" \
+    --arg     api_key    "$MENTOR_API_KEY" \
+    '{prompt: $prompt, mode: $mode, philosophy: $philosophy, user_model: $user_model, api_key: $api_key}' \
+    2>/dev/null) || exit 0
 
-PROMPT_ESC=$(escape_for_json "$PROMPT")
-PHILOSOPHY_ESC=$(escape_for_json "$PHILOSOPHY")
+JUDGMENT=$(printf '%s' "$PAYLOAD" | timeout 6 bash "$EVALUATE_SCRIPT" 2>/dev/null \
+    || echo '{"intervene":false}')
 
-MENTOR_API_KEY_ESC=$(escape_for_json "$MENTOR_API_KEY")
-PAYLOAD=$(printf '{"prompt":"%s","mode":"%s","philosophy":"%s","user_model":%s,"api_key":"%s"}' \
-    "$PROMPT_ESC" \
-    "$MODE" \
-    "$PHILOSOPHY_ESC" \
-    "$USER_MODEL" \
-    "$MENTOR_API_KEY_ESC")
-
-# ─── Call evaluate-prompt.py (6s timeout) ─────────────────────────────────────
-JUDGMENT=$(printf '%s' "$PAYLOAD" | timeout 6 "$PYTHON_CMD" "$EVALUATE_SCRIPT" 2>/dev/null || echo '{"intervene":false}')
-
-# ─── Parse judgment ────────────────────────────────────────────────────────────
-INTERVENE=$( printf '%s' "$JUDGMENT" | "$PYTHON_CMD" -c "
-import json, sys
-try:
-    d = json.load(sys.stdin)
-    print('true' if d.get('intervene') else 'false')
-except:
-    print('false')
-" 2>/dev/null || echo "false")
-
+# ─── Parse judgment ───────────────────────────────────────────────────────────
+INTERVENE=$(        echo "$JUDGMENT" | "$JQ" -r '.intervene // false' 2>/dev/null || echo "false")
 [[ "$INTERVENE" != "true" ]] && exit 0
 
-INTERVENTION_TYPE=$(printf '%s' "$JUDGMENT" | "$PYTHON_CMD" -c "
-import json, sys
-try:
-    d = json.load(sys.stdin)
-    print(d.get('type', 'nudge'))
-except:
-    print('nudge')
-" 2>/dev/null || echo "nudge")
-
-FEEDBACK=$(printf '%s' "$JUDGMENT" | "$PYTHON_CMD" -c "
-import json, sys
-try:
-    d = json.load(sys.stdin)
-    print(d.get('message', ''))
-except:
-    print('')
-" 2>/dev/null || echo "")
-
+INTERVENTION_TYPE=$(echo "$JUDGMENT" | "$JQ" -r '.type    // "nudge"' 2>/dev/null || echo "nudge")
+FEEDBACK=$(         echo "$JUDGMENT" | "$JQ" -r '.message // ""'      2>/dev/null || echo "")
 [[ -z "$FEEDBACK" ]] && exit 0
 
-# ─── Write session state for stop-logger ─────────────────────────────────────
-TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
-STATE_FILE="${COACHING_DIR}/session-${SESSION_ID}.tmp"
-FEEDBACK_FOR_STATE=$(escape_for_json "$FEEDBACK")
-printf '{"coaching_triggered":true,"type":"%s","tags":["%s"],"message":"%s","timestamp":"%s"}\n' \
-    "$INTERVENTION_TYPE" \
-    "$INTERVENTION_TYPE" \
-    "$FEEDBACK_FOR_STATE" \
-    "$TIMESTAMP" > "$STATE_FILE"
+# ─── Write session state (epoch timestamp) ────────────────────────────────────
+NOW_EPOCH=$(date +%s)
+"$JQ" -n \
+    --arg     type      "$INTERVENTION_TYPE" \
+    --arg     message   "$FEEDBACK" \
+    --argjson timestamp "$NOW_EPOCH" \
+    '{coaching_triggered: true, type: $type, tags: [$type], message: $message, timestamp: $timestamp}' \
+    > "$STATE_FILE" 2>/dev/null || true
 
-# ─── Format coaching message by intervention type ─────────────────────────────
+# ─── Format coaching message ──────────────────────────────────────────────────
 case "$INTERVENTION_TYPE" in
     nudge)         PREFIX="💡 Mentor (nudge):" ;;
     correction)    PREFIX="⚡ Mentor:" ;;
@@ -217,11 +133,11 @@ esac
 
 FULL_MSG="${PREFIX} ${FEEDBACK}"
 
-# ─── Build coaching message ───────────────────────────────────────────────────
-FULL_MSG_ESC=$(escape_for_json "$FULL_MSG")
-COACHING_MSG="<prompt-coaching-note>\\nBefore responding, output this exact line verbatim, then proceed with your answer:\\n\\n${FULL_MSG_ESC}\\n</prompt-coaching-note>"
+# ─── Build and output hookSpecificOutput (jq handles all JSON escaping) ───────
+CONTEXT=$(printf '<prompt-coaching-note>\nBefore responding, output this exact line verbatim, then proceed with your answer:\n\n%s\n</prompt-coaching-note>' "$FULL_MSG")
 
-# ─── Output hookSpecificOutput ────────────────────────────────────────────────
-printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "UserPromptSubmit",\n    "additionalContext": "%s"\n  }\n}\n' "$COACHING_MSG"
+"$JQ" -n \
+    --arg context "$CONTEXT" \
+    '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: $context}}'
 
 exit 0

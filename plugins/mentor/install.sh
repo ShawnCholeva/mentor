@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # install.sh — Mentor plugin setup for Linux and macOS
 #
+# Optional but recommended: pre-downloads jq and seeds defaults before
+# your first prompt. The hooks will auto-bootstrap jq on first use anyway,
+# but running this avoids a ~1s delay on your first coaching-eligible prompt.
+#
 # What this does:
 #   1. Creates ~/.claude/coaching/ directory structure
 #   2. Locates or downloads a static jq binary

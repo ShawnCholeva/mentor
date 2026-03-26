@@ -12,8 +12,8 @@ COACHING_DIR="${HOME}/.claude/coaching"
 USER_MODEL_FILE="${COACHING_DIR}/user-model.json"
 
 # ─── Resolve jq ───────────────────────────────────────────────────────────────
-JQ=$(command -v jq 2>/dev/null || echo "${COACHING_DIR}/bin/jq")
-[[ ! -x "$JQ" ]] && exit 0
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/bootstrap-jq.sh" 2>/dev/null || exit 0
 
 # ─── Read and parse stdin ─────────────────────────────────────────────────────
 INPUT=$(cat)

@@ -12,7 +12,6 @@ COACHING_DIR="${HOME}/.claude/coaching"
 CONFIG_FILE="${COACHING_DIR}/config.json"
 PHILOSOPHY_FILE="${COACHING_DIR}/philosophy.md"
 USER_MODEL_FILE="${COACHING_DIR}/user-model.json"
-WARNED_FLAG="${COACHING_DIR}/.jq-missing-warned"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULTS_DIR="$(cd "${SCRIPT_DIR}/../defaults" && pwd 2>/dev/null || echo "")"
@@ -20,15 +19,9 @@ EVALUATE_SCRIPT="${SCRIPT_DIR}/lib/evaluate-prompt.sh"
 
 mkdir -p "$COACHING_DIR"
 
-# ─── Resolve jq ───────────────────────────────────────────────────────────────
-JQ=$(command -v jq 2>/dev/null || echo "${COACHING_DIR}/bin/jq")
-if [[ ! -x "$JQ" ]]; then
-    if [[ ! -f "$WARNED_FLAG" ]]; then
-        echo "[mentor] jq not found — run install.sh to enable coaching" >&2
-        touch "$WARNED_FLAG" 2>/dev/null || true
-    fi
-    exit 0
-fi
+# ─── Resolve jq (auto-installs on first use) ──────────────────────────────────
+# shellcheck source=lib/bootstrap-jq.sh
+source "${SCRIPT_DIR}/lib/bootstrap-jq.sh" || exit 0
 
 # ─── Read stdin ───────────────────────────────────────────────────────────────
 INPUT=$(cat)

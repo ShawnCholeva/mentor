@@ -19,9 +19,9 @@ UPDATE_SCRIPT="${SCRIPT_DIR}/lib/update-user-model.sh"
 
 mkdir -p "$COACHING_DIR"
 
-# ─── Resolve jq ───────────────────────────────────────────────────────────────
-JQ=$(command -v jq 2>/dev/null || echo "${COACHING_DIR}/bin/jq")
-[[ ! -x "$JQ" ]] && exit 0
+# ─── Resolve jq (auto-installs on first use) ──────────────────────────────────
+# shellcheck source=lib/bootstrap-jq.sh
+source "${SCRIPT_DIR}/lib/bootstrap-jq.sh" || exit 0
 
 # ─── Read stdin ───────────────────────────────────────────────────────────────
 INPUT=$(cat)

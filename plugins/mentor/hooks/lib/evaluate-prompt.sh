@@ -10,11 +10,8 @@ set -uo pipefail
 FALLBACK='{"intervene":false}'
 
 # ─── Resolve jq ───────────────────────────────────────────────────────────────
-JQ=$(command -v jq 2>/dev/null || echo "${HOME}/.claude/coaching/bin/jq")
-if [[ ! -x "$JQ" ]]; then
-    echo "$FALLBACK"
-    exit 0
-fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/bootstrap-jq.sh" 2>/dev/null || { echo "$FALLBACK"; exit 0; }
 
 # ─── Read and parse stdin ─────────────────────────────────────────────────────
 INPUT=$(cat)

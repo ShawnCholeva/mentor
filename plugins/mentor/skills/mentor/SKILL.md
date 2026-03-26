@@ -1,31 +1,31 @@
 ---
-name: coach-mode
+name: mentor
 description: >-
   Configure the inline coaching system. Toggle coaching on/off, switch between
   chill and elite intervention thresholds, set bootstrap minimum, and view current settings.
-  Usage: /coach-mode [chill|elite|on|off|status|bootstrap <n>]
+  Usage: /mentor [chill|elite|on|off|status|bootstrap <n>]
 ---
 
-# /coach-mode
+# /mentor
 
 Configure the inline prompt coaching system.
 
 ## Usage
 
 ```
-/coach-mode chill         — fewer interventions (default, high-confidence only)
-/coach-mode elite         — more interventions (fires on missing structure too)
-/coach-mode on            — enable coaching
-/coach-mode off           — disable coaching
-/coach-mode status        — show current settings and log stats
-/coach-mode bootstrap <n> — set minimum interactions before pattern detection fires (default: 20)
+/mentor chill         — fewer interventions (default, high-confidence only)
+/mentor elite         — more interventions (fires on missing structure too)
+/mentor on            — enable coaching
+/mentor off           — disable coaching
+/mentor status        — show current settings and log stats
+/mentor bootstrap <n> — set minimum interactions before pattern detection fires (default: 20)
 ```
 
 ---
 
 ## Step 1 — Parse the argument
 
-Read the argument provided by the user (after `/coach-mode`).
+Read the argument provided by the user (after `/mentor`).
 
 If no argument provided → show status (same as `status`).
 
@@ -76,7 +76,7 @@ print(json.dumps(d, indent=2))
 ```
 
 Confirm with a one-line explanation:
-- **chill**: "Coaching set to chill — only high-confidence triggers fire (vagueness, clear skill mismatches)."
+- **chill**: "Coaching set to chill — only high-confidence triggers fire (vagueness)."
 - **elite**: "Coaching set to elite — additional triggers enabled (missing output format on complex prompts)."
 
 ---
@@ -123,7 +123,7 @@ Log: [N] interactions recorded
   — Coaching triggered: [X] times ([Y]%)
   — Last logged: [timestamp]
 
-Run /meta-insights for a full behavioral analysis.
+Run /mentor-recap for a full behavioral analysis.
 ```
 
 If the log file doesn't exist yet: "No interactions logged yet. The coaching system activates automatically on your next prompt."
@@ -132,4 +132,4 @@ If the log file doesn't exist yet: "No interactions logged yet. The coaching sys
 
 ## Step 3 — Done
 
-No next pillar suggestion needed — this is a configuration command.
+No further action needed — this is a configuration command.

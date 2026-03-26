@@ -1,5 +1,5 @@
 {
-  "name": "claude-mentor",
+  "name": "mentor",
   "owner": {
     "name": "Shawn Choleva"
   },
@@ -8,8 +8,8 @@
   },
   "plugins": [
     {
-      "name": "claude-mentor",
-      "source": "./plugins/claude-mentor",
+      "name": "mentor",
+      "source": "./plugins/mentor",
       "description": "Inline prompt coaching system. Intercepts prompts before they reach Claude, fires heuristic coaching notes for vague or misrouted prompts, and logs interactions for pattern detection.",
       "version": "1.0.0",
       "license": "MIT",

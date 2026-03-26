@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # UserPromptSubmit hook — inline prompt coaching via additionalContext
-# Part of claude-mentor plugin
+# Part of mentor plugin
 #
 # Evaluates the user's prompt with heuristics before it reaches Claude.
 # On a high-confidence match, injects a coaching note as additionalContext
@@ -75,13 +75,6 @@ if [[ -f "$LOG_FILE" ]]; then
     INTERACTION_COUNT=$(wc -l < "$LOG_FILE" 2>/dev/null | tr -d '[:space:]' || echo "0")
 fi
 
-# ─── Rate limiting: max 1 coaching per 3 consecutive prompts ─────────────────
-if [[ -f "$LOG_FILE" ]]; then
-    RECENT_COACHING=$(tail -3 "$LOG_FILE" 2>/dev/null | grep -c '"coaching_triggered":true' 2>/dev/null || true)
-    RECENT_COACHING="${RECENT_COACHING:-0}"
-    [[ "$RECENT_COACHING" -ge 1 ]] && exit 0
-fi
-
 # ─── Heuristic coaching engine ────────────────────────────────────────────────
 FEEDBACK=""
 TAGS=""
@@ -102,31 +95,7 @@ if [[ -z "$FEEDBACK" ]] && echo "$PROMPT_LOWER" | grep -qE "^(help me|fix this|m
     fi
 fi
 
-# 3. /build invoked for design/architecture work
-if [[ -z "$FEEDBACK" ]] && echo "$PROMPT" | grep -qE "^/build"; then
-    if echo "$PROMPT_LOWER" | grep -qiE "(architect|design a|write a spec|requirements|should we use|what approach|tradeoffs|what.*strategy|how should we)"; then
-        FEEDBACK="This looks like a design task. /design gives you architecture, requirements, and risk analysis first."
-        TAGS="skill_mismatch"
-    fi
-fi
-
-# 4. /design invoked for debugging/bugfix work
-if [[ -z "$FEEDBACK" ]] && echo "$PROMPT" | grep -qE "^/design"; then
-    if echo "$PROMPT_LOWER" | grep -qiE "(debug|fix.*error|not working|exception|crash|traceback|bug in|error:)"; then
-        FEEDBACK="This looks like a debugging task. /support is better suited here."
-        TAGS="skill_mismatch"
-    fi
-fi
-
-# 5. /build invoked for discovery/exploration
-if [[ -z "$FEEDBACK" ]] && echo "$PROMPT" | grep -qE "^/build"; then
-    if echo "$PROMPT_LOWER" | grep -qiE "^/build.*(understand|explore|how does|what is|find|look at|show me|explain|walk me through)"; then
-        FEEDBACK="This looks like an exploration task. /discover is better suited for understanding codebases and docs."
-        TAGS="skill_mismatch"
-    fi
-fi
-
-# 6. Pattern-based: repeated vague prompts in recent history
+# 3. Pattern-based: repeated vague prompts in recent history
 if [[ -z "$FEEDBACK" ]] && [[ "$INTERACTION_COUNT" -ge "$BOOTSTRAP_MIN" ]] && [[ -f "$LOG_FILE" ]]; then
     RECENT_VAGUE=$(tail -20 "$LOG_FILE" 2>/dev/null | grep -c '"vague"' 2>/dev/null || true)
     RECENT_VAGUE="${RECENT_VAGUE:-0}"
@@ -164,7 +133,7 @@ escape_for_json() {
 }
 
 FEEDBACK_ESC=$(escape_for_json "$FEEDBACK")
-COACHING_MSG="<prompt-coaching-note>\\nBefore responding, share this coaching note with the user in 1-2 sentences, then proceed with your answer:\\n\\n\u26a0\ufe0f Prompt Coach: ${FEEDBACK_ESC}\\n</prompt-coaching-note>"
+COACHING_MSG="<prompt-coaching-note>\\nBefore responding, share this coaching note with the user in 1-2 sentences, then proceed with your answer:\\n\\n\u26a0\ufe0f Mentor: ${FEEDBACK_ESC}\\n</prompt-coaching-note>"
 
 # ─── Output hookSpecificOutput ────────────────────────────────────────────────
 printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "UserPromptSubmit",\n    "additionalContext": "%s"\n  }\n}\n' "$COACHING_MSG"

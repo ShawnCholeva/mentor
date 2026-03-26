@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Stop hook — interaction logger for coaching system
-# Part of claude-mentor plugin
+# Part of mentor plugin
 #
 # Fires after every Claude response. Reads the session state written by
 # user-prompt-submit, counts turns from the transcript, and appends a
@@ -107,24 +107,22 @@ except:
     if [[ -n "$LAST_PROMPT" ]]; then
         P_LOWER=$(echo "$LAST_PROMPT" | tr '[:upper:]' '[:lower:]')
 
-        # Detect skill used
-        if echo "$LAST_PROMPT" | grep -qE "^/discover"; then SKILL_USED='"/discover"'; INTENT="discover"
-        elif echo "$LAST_PROMPT" | grep -qE "^/design";   then SKILL_USED='"/design"';  INTENT="design"
-        elif echo "$LAST_PROMPT" | grep -qE "^/build";    then SKILL_USED='"/build"';   INTENT="build"
-        elif echo "$LAST_PROMPT" | grep -qE "^/deploy";   then SKILL_USED='"/deploy"';  INTENT="deploy"
-        elif echo "$LAST_PROMPT" | grep -qE "^/support";  then SKILL_USED='"/support"'; INTENT="support"
-        # Classify by content if no skill prefix
-        elif echo "$P_LOWER" | grep -qiE "(debug|error|traceback|not working|crash|bug)"; then INTENT="debug"
-        elif echo "$P_LOWER" | grep -qiE "(design|architect|plan|spec|requirements)";     then INTENT="design"
-        elif echo "$P_LOWER" | grep -qiE "(implement|build|create|add feature|write)";    then INTENT="build"
-        elif echo "$P_LOWER" | grep -qiE "(explore|understand|what is|how does|find)";    then INTENT="discover"
-        elif echo "$P_LOWER" | grep -qiE "(deploy|release|ci|pipeline|environment)";      then INTENT="deploy"
-        else INTENT="explore"
+        # Detect skill used (any /skill-name prefix)
+        if echo "$LAST_PROMPT" | grep -qE "^/[a-z]"; then
+            _skill=$(echo "$LAST_PROMPT" | grep -oE "^/[a-z][a-z0-9-]+" | head -1)
+            SKILL_USED="\"${_skill}\""
+            INTENT="skill-invoked"
         fi
 
-        # Override with vague if short
-        WORD_COUNT=$(echo "$LAST_PROMPT" | wc -w | tr -d '[:space:]')
-        [[ "$WORD_COUNT" -lt 6 ]] && INTENT="vague"
+        # Classify as vague if short and no skill used
+        if [[ "$INTENT" == "unknown" ]]; then
+            WORD_COUNT=$(echo "$LAST_PROMPT" | wc -w | tr -d '[:space:]')
+            if [[ "$WORD_COUNT" -lt 6 ]]; then
+                INTENT="vague"
+            else
+                INTENT="direct"
+            fi
+        fi
     fi
 fi
 
@@ -135,7 +133,7 @@ ENTRY_ID=$(uuidgen 2>/dev/null || \
            echo "${SESSION_ID}-${TIMESTAMP}")
 
 # ─── Append log entry ─────────────────────────────────────────────────────────
-printf '{"id":"%s","session_id":"%s","timestamp":"%s","intent":"%s","skill_used":%s,"turn_count":%s,"coaching_triggered":%s,"coaching_action":null,"tags":%s}\n' \
+printf '{"id":"%s","session_id":"%s","timestamp":"%s","intent":"%s","skill_used":%s,"turn_count":%s,"coaching_triggered":%s,"tags":%s}\n' \
     "$ENTRY_ID" \
     "$SESSION_ID" \
     "$TIMESTAMP" \

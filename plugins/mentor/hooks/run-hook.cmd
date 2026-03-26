@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cross-platform hook runner for claude-mentor plugin
+# Cross-platform hook runner for mentor plugin
 # Usage: run-hook.cmd <hook-name>
 
 set -euo pipefail

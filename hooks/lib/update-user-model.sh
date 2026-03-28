@@ -56,12 +56,10 @@ ${COACHING_STR}
 Produce the updated profile JSON."
 
 # ─── Call Claude via CLI ─────────────────────────────────────────────────────
-TEXT=$(MENTOR_INTERNAL=1 timeout 10 claude -p \
+TEXT=$(printf '%s' "$USER_MESSAGE" | MENTOR_INTERNAL=1 timeout 10 claude -p \
     --model "claude-haiku-4-5-20251001" \
     --system-prompt "$SYSTEM_PROMPT" \
-    --no-session-persistence \
-    --tools "" \
-    "$USER_MESSAGE" 2>/dev/null) || true
+    --no-session-persistence 2>/dev/null) || true
 
 [[ -z "$TEXT" ]] && exit 0
 

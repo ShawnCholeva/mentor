@@ -74,6 +74,23 @@ fi
 # ─── Guard: evaluate script must exist ───────────────────────────────────────
 [[ ! -f "$EVALUATE_SCRIPT" ]] && exit 0
 
+# ─── Read prompt history from Claude Code history ────────────────────────────
+HISTORY_FILE="${HOME}/.claude/history.jsonl"
+HISTORY_JSON="[]"
+if [[ -f "$HISTORY_FILE" ]] && [[ -n "$SESSION_ID" ]]; then
+    HISTORY_LINES=$(tac "$HISTORY_FILE" \
+        | "$JQ" --arg sid "$SESSION_ID" -r 'select(.sessionId == $sid) | .display' 2>/dev/null \
+        | grep -v "^/" \
+        | grep -vxF "$PROMPT" \
+        | head -n "$HISTORY_SIZE" \
+        | tac \
+        | cut -c1-500) || true
+
+    if [[ -n "$HISTORY_LINES" ]]; then
+        HISTORY_JSON=$(printf '%s\n' "$HISTORY_LINES" | "$JQ" -R . | "$JQ" -s . 2>/dev/null || echo "[]")
+    fi
+fi
+
 # ─── Bootstrap: seed defaults if missing ─────────────────────────────────────
 if [[ ! -f "$PHILOSOPHY_FILE" ]] && [[ -n "$DEFAULTS_DIR" ]] && [[ -f "${DEFAULTS_DIR}/philosophy.md" ]]; then
     cp "${DEFAULTS_DIR}/philosophy.md" "$PHILOSOPHY_FILE" 2>/dev/null || true
@@ -97,7 +114,8 @@ PAYLOAD=$("$JQ" -n \
     --arg     mode       "$MODE" \
     --arg     philosophy "$PHILOSOPHY" \
     --argjson user_model "$USER_MODEL" \
-    '{prompt: $prompt, mode: $mode, philosophy: $philosophy, user_model: $user_model}' \
+    --argjson history    "$HISTORY_JSON" \
+    '{prompt: $prompt, mode: $mode, philosophy: $philosophy, user_model: $user_model, history: $history}' \
     2>/dev/null) || exit 0
 
 JUDGMENT=$(printf '%s' "$PAYLOAD" | timeout 14 bash "$EVALUATE_SCRIPT" 2>/dev/null \

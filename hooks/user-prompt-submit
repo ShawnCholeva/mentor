@@ -38,11 +38,15 @@ SESSION_ID=$( echo "$INPUT" | "$JQ" -r '.session_id // ""' 2>/dev/null || echo "
 ENABLED="true"
 MODE="chill"
 BOOTSTRAP_MIN=20
+COOLDOWN_SECONDS=30
+HISTORY_SIZE=10
 
 if [[ -f "$CONFIG_FILE" ]]; then
-    ENABLED=$(     "$JQ" -r 'if .enabled == false then "false" else "true" end' "$CONFIG_FILE" 2>/dev/null || echo "true")
-    MODE=$(        "$JQ" -r '.mode          // "chill"' "$CONFIG_FILE" 2>/dev/null || echo "chill")
-    BOOTSTRAP_MIN=$("$JQ" -r '.bootstrap_min // 20'    "$CONFIG_FILE" 2>/dev/null || echo "20")
+    ENABLED=$(         "$JQ" -r 'if .enabled == false then "false" else "true" end' "$CONFIG_FILE" 2>/dev/null || echo "true")
+    MODE=$(            "$JQ" -r '.mode               // "chill"' "$CONFIG_FILE" 2>/dev/null || echo "chill")
+    BOOTSTRAP_MIN=$(   "$JQ" -r '.bootstrap_min      // 20'     "$CONFIG_FILE" 2>/dev/null || echo "20")
+    COOLDOWN_SECONDS=$("$JQ" -r '.cooldown_seconds   // 30'     "$CONFIG_FILE" 2>/dev/null || echo "30")
+    HISTORY_SIZE=$(    "$JQ" -r '.prompt_history_size // 10'     "$CONFIG_FILE" 2>/dev/null || echo "10")
 fi
 
 [[ "$ENABLED" != "true" ]] && exit 0
@@ -55,13 +59,13 @@ PROMPT_TRIMMED=$(echo "$PROMPT" | tr '[:upper:]' '[:lower:]' | tr -d '[:punct:]'
 AFFIRMATIONS="^(yes|no|ok|okay|sure|yep|nope|yup|nah|agreed|correct|exactly|right|proceed|continue|go ahead|do it|sounds good|looks good|make it so|that works|perfect|great|fine|done|got it)$"
 echo "$PROMPT_TRIMMED" | grep -qiE "$AFFIRMATIONS" && exit 0
 
-# ─── Guard: per-session cooldown (30s) ────────────────────────────────────────
+# ─── Guard: per-session cooldown ─────────────────────────────────────────────
 STATE_FILE="${COACHING_DIR}/session-${SESSION_ID}.tmp"
 if [[ -n "$SESSION_ID" ]] && [[ -f "$STATE_FILE" ]]; then
-    LAST_TS=$("$JQ" -r '.timestamp // 0' "$STATE_FILE" 2>/dev/null || echo "0")
+    LAST_TS=$("$JQ" -r '.last_intervention_ts // 0' "$STATE_FILE" 2>/dev/null || echo "0")
     NOW_EPOCH=$(date +%s)
     ELAPSED=$(( NOW_EPOCH - LAST_TS ))
-    [[ "$ELAPSED" -lt 30 ]] && exit 0
+    [[ "$ELAPSED" -lt "$COOLDOWN_SECONDS" ]] && exit 0
 fi
 
 # ─── Guard: evaluate script must exist ───────────────────────────────────────

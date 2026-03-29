@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # evaluate-prompt.sh — Prompt evaluator using claude -p
 #
-# Input:  JSON via stdin {prompt, mode, philosophy, user_model}
+# Input:  JSON via stdin {prompt, mode, philosophy, user_model, history}
 # Output: JSON judgment  {intervene: bool, [type, message]}
 # Always exits 0. On any error outputs {"intervene":false}.
 
@@ -20,6 +20,7 @@ PROMPT=$(      echo "$INPUT" | "$JQ" -r '.prompt      // ""'      2>/dev/null ||
 MODE=$(         echo "$INPUT" | "$JQ" -r '.mode        // "chill"' 2>/dev/null || echo "chill")
 PHILOSOPHY=$(   echo "$INPUT" | "$JQ" -r '.philosophy  // ""'      2>/dev/null || echo "")
 USER_MODEL=$(   echo "$INPUT" | "$JQ" -c '.user_model  // {}'      2>/dev/null || echo "{}")
+HISTORY=$(      echo "$INPUT" | "$JQ" -r '.history     // [] | .[]' 2>/dev/null || echo "")
 
 [[ -z "$PROMPT" ]] && { echo "$FALLBACK"; exit 0; }
 
@@ -80,16 +81,35 @@ ${MODEL_SECTION}
 8. Mode is \"${MODE}\". In \"chill\" mode, only intervene on high-confidence issues (vague prompts, missing diagnostics). In \"elite\" mode, also intervene on subtler issues (missing output format, scope underestimation).
 9. When you challenge, explain WHY the thinking is flawed — not just what to fix.
 10. Prefer one precise observation over multiple generic suggestions.
+11. When you see a PATTERN across the recent prompt history (repeated vagueness, escalating frustration, missed skill opportunities, or consistent improvement), reference the pattern in your coaching. Do NOT coach on individual old prompts — only patterns the current prompt continues or breaks.
 
 Respond with ONLY a JSON object, no markdown, no explanation:
 {\"intervene\": false}
 or
 {\"intervene\": true, \"type\": \"nudge|correction|challenge|reinforcement\", \"message\": \"your coaching message here\"}"
 
-USER_MESSAGE="Evaluate this prompt:
+# ─── Build user message with optional history ────────────────────────────────
+if [[ -n "$HISTORY" ]]; then
+    HISTORY_NUMBERED=""
+    IDX=1
+    while IFS= read -r line; do
+        HISTORY_NUMBERED="${HISTORY_NUMBERED}${IDX}. ${line:0:500}
+"
+        IDX=$((IDX + 1))
+    done <<< "$HISTORY"
+
+    USER_MESSAGE="Recent prompts in this session:
+${HISTORY_NUMBERED}---
+Evaluate this prompt:
 ---
 ${PROMPT_TRUNC}
 ---"
+else
+    USER_MESSAGE="Evaluate this prompt:
+---
+${PROMPT_TRUNC}
+---"
+fi
 
 # ─── Call Claude via CLI ─────────────────────────────────────────────────────
 TEXT=$(printf '%s' "$USER_MESSAGE" | MENTOR_INTERNAL=1 timeout 12 claude -p \

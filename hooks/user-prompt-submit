@@ -22,6 +22,9 @@ EVALUATE_SCRIPT="${SCRIPT_DIR}/lib/evaluate-prompt.sh"
 
 mkdir -p "$COACHING_DIR"
 
+# ─── Sweep orphaned session files (crashed sessions) ─────────────────────────
+find "$COACHING_DIR" -name 'session-*.tmp' -mtime +1 -delete 2>/dev/null || true
+
 # ─── Resolve jq (auto-installs on first use) ──────────────────────────────────
 # shellcheck source=lib/bootstrap-jq.sh
 source "${SCRIPT_DIR}/lib/bootstrap-jq.sh" || exit 0
@@ -108,13 +111,9 @@ INTERVENTION_TYPE=$(echo "$JUDGMENT" | "$JQ" -r '.type    // "nudge"' 2>/dev/nul
 FEEDBACK=$(         echo "$JUDGMENT" | "$JQ" -r '.message // ""'      2>/dev/null || echo "")
 [[ -z "$FEEDBACK" ]] && exit 0
 
-# ─── Write session state (epoch timestamp) ────────────────────────────────────
+# ─── Write session state ─────────────────────────────────────────────────────
 NOW_EPOCH=$(date +%s)
-"$JQ" -n \
-    --arg     type      "$INTERVENTION_TYPE" \
-    --arg     message   "$FEEDBACK" \
-    --argjson timestamp "$NOW_EPOCH" \
-    '{coaching_triggered: true, type: $type, tags: [$type], message: $message, timestamp: $timestamp}' \
+"$JQ" -n --argjson ts "$NOW_EPOCH" '{last_intervention_ts: $ts}' \
     > "$STATE_FILE" 2>/dev/null || true
 
 # ─── Format coaching message ──────────────────────────────────────────────────

@@ -112,12 +112,14 @@ ${PROMPT_TRUNC}
 fi
 
 # ─── Call Claude via CLI ─────────────────────────────────────────────────────
-TEXT=$(printf '%s' "$USER_MESSAGE" | MENTOR_INTERNAL=1 timeout 12 claude -p \
+TEXT=$(printf '%s' "$USER_MESSAGE" | MENTOR_INTERNAL=1 timeout 25 claude -p \
     --model "$MODEL" \
     --system-prompt "$SYSTEM_PROMPT" \
     --no-session-persistence 2>/dev/null) || true
 
 [[ -z "$TEXT" ]] && { echo "$FALLBACK"; exit 0; }
+# Log raw model response for debugging (distinguish real response from fallback)
+echo "[$(date -Iseconds)] MENTOR-EVAL raw_response='$(printf '%s' "$TEXT" | tr -d '\n' | cut -c1-200)'" >> "${HOME}/.claude/coaching/hook-debug.log" 2>/dev/null || true
 
 # Strip markdown fences if present
 if [[ "$TEXT" == '```'* ]]; then

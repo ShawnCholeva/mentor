@@ -21,6 +21,23 @@ DEFAULTS_DIR="$(cd "${SCRIPT_DIR}/../defaults" && pwd 2>/dev/null || echo "")"
 EVALUATE_SCRIPT="${SCRIPT_DIR}/lib/evaluate-prompt.sh"
 
 mkdir -p "$COACHING_DIR"
+DBG() { echo "[$(date -Iseconds)] MENTOR-DBG $*" >> "${COACHING_DIR}/hook-debug.log" 2>/dev/null || true; }
+
+# ─── Reset trap: clear any persisted additionalContext when not coaching ──────
+# Without this, a coaching note injected on one prompt persists into all
+# subsequent prompts because Claude Code keeps additionalContext in session context.
+_EMIT_RESET=false
+_COACHING_EMITTED=false
+_EXIT_REASON="unknown"
+_reset_context() {
+    DBG "EXIT-TRAP: reason=${_EXIT_REASON} _EMIT_RESET=${_EMIT_RESET} _COACHING_EMITTED=${_COACHING_EMITTED}"
+    if [[ "$_EMIT_RESET" == "true" ]] && [[ "$_COACHING_EMITTED" == "false" ]]; then
+        local RESET_JSON='{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":""}}'
+        DBG "EXIT-TRAP: emitting reset → ${RESET_JSON}"
+        printf '%s\n' "$RESET_JSON"
+    fi
+}
+trap _reset_context EXIT
 
 # ─── Sweep orphaned session files (crashed sessions) ─────────────────────────
 find "$COACHING_DIR" -name 'session-*.tmp' -mtime +1 -delete 2>/dev/null || true
@@ -35,7 +52,9 @@ INPUT=$(cat)
 PROMPT=$(     echo "$INPUT" | "$JQ" -r '.prompt     // ""' 2>/dev/null || echo "")
 SESSION_ID=$( echo "$INPUT" | "$JQ" -r '.session_id // ""' 2>/dev/null || echo "")
 
-[[ -z "$PROMPT" ]] && exit 0
+[[ -z "$PROMPT" ]] && { _EXIT_REASON="empty-prompt"; exit 0; }
+_EMIT_RESET=true   # real prompt — any non-coaching exit should now reset context
+DBG "prompt='${PROMPT:0:80}' session='${SESSION_ID:-EMPTY}'"
 
 # ─── Load settings (defaults if config missing) ───────────────────────────────
 ENABLED="true"
@@ -52,27 +71,33 @@ if [[ -f "$CONFIG_FILE" ]]; then
     HISTORY_SIZE=$(    "$JQ" -r '.prompt_history_size // 10'     "$CONFIG_FILE" 2>/dev/null || echo "10")
 fi
 
-[[ "$ENABLED" != "true" ]] && exit 0
+[[ "$ENABLED" != "true" ]] && { _EXIT_REASON="disabled"; exit 0; }
 
 # ─── Guard: skill invocations ─────────────────────────────────────────────────
-echo "$PROMPT" | grep -qE "^/[a-z]" && exit 0
+echo "$PROMPT" | grep -qE "^/[a-z]" && { _EXIT_REASON="slash-command"; exit 0; }
 
 # ─── Guard: conversational affirmations ───────────────────────────────────────
 PROMPT_TRIMMED=$(echo "$PROMPT" | tr '[:upper:]' '[:lower:]' | tr -d '[:punct:]' | xargs)
 AFFIRMATIONS="^(yes|no|ok|okay|sure|yep|nope|yup|nah|agreed|correct|exactly|right|proceed|continue|go ahead|do it|sounds good|looks good|make it so|that works|perfect|great|fine|done|got it)$"
-echo "$PROMPT_TRIMMED" | grep -qiE "$AFFIRMATIONS" && exit 0
+echo "$PROMPT_TRIMMED" | grep -qiE "$AFFIRMATIONS" && { _EXIT_REASON="affirmation"; exit 0; }
 
 # ─── Guard: per-session cooldown ─────────────────────────────────────────────
 STATE_FILE="${COACHING_DIR}/session-${SESSION_ID}.tmp"
+DBG "cooldown: session='${SESSION_ID:-EMPTY}' state_file=$([ -f "$STATE_FILE" ] && echo exists || echo missing) ls=$(ls -la "$STATE_FILE" 2>&1 || true)"
 if [[ -n "$SESSION_ID" ]] && [[ -f "$STATE_FILE" ]]; then
     LAST_TS=$("$JQ" -r '.last_intervention_ts // 0' "$STATE_FILE" 2>/dev/null || echo "0")
     NOW_EPOCH=$(date +%s)
     ELAPSED=$(( NOW_EPOCH - LAST_TS ))
-    [[ "$ELAPSED" -lt "$COOLDOWN_SECONDS" ]] && exit 0
+    if [[ "$ELAPSED" -lt "$COOLDOWN_SECONDS" ]]; then
+        DBG "cooldown: BLOCKED elapsed=${ELAPSED}s < ${COOLDOWN_SECONDS}s"
+        _EXIT_REASON="cooldown-blocked"
+        exit 0
+    fi
+    DBG "cooldown: passed elapsed=${ELAPSED}s"
 fi
 
 # ─── Guard: evaluate script must exist ───────────────────────────────────────
-[[ ! -f "$EVALUATE_SCRIPT" ]] && exit 0
+[[ ! -f "$EVALUATE_SCRIPT" ]] && { _EXIT_REASON="no-evaluator"; exit 0; }
 
 # ─── Read prompt history from Claude Code history ────────────────────────────
 HISTORY_FILE="${HOME}/.claude/history.jsonl"
@@ -118,21 +143,23 @@ PAYLOAD=$("$JQ" -n \
     '{prompt: $prompt, mode: $mode, philosophy: $philosophy, user_model: $user_model, history: $history}' \
     2>/dev/null) || exit 0
 
-JUDGMENT=$(printf '%s' "$PAYLOAD" | timeout 14 bash "$EVALUATE_SCRIPT" 2>/dev/null \
+JUDGMENT=$(printf '%s' "$PAYLOAD" | timeout 28 bash "$EVALUATE_SCRIPT" 2>/dev/null \
     || echo '{"intervene":false}')
+DBG "judgment: $(printf '%s' "$JUDGMENT" | tr -d '\n')"
 
 # ─── Parse judgment ───────────────────────────────────────────────────────────
 INTERVENE=$(        echo "$JUDGMENT" | "$JQ" -r '.intervene // false' 2>/dev/null || echo "false")
-[[ "$INTERVENE" != "true" ]] && exit 0
+[[ "$INTERVENE" != "true" ]] && { _EXIT_REASON="no-intervention"; exit 0; }
 
 INTERVENTION_TYPE=$(echo "$JUDGMENT" | "$JQ" -r '.type    // "nudge"' 2>/dev/null || echo "nudge")
 FEEDBACK=$(         echo "$JUDGMENT" | "$JQ" -r '.message // ""'      2>/dev/null || echo "")
-[[ -z "$FEEDBACK" ]] && exit 0
+[[ -z "$FEEDBACK" ]] && { _EXIT_REASON="empty-feedback"; exit 0; }
 
 # ─── Write session state ─────────────────────────────────────────────────────
 NOW_EPOCH=$(date +%s)
 "$JQ" -n --argjson ts "$NOW_EPOCH" '{last_intervention_ts: $ts}' \
     > "$STATE_FILE" 2>/dev/null || true
+DBG "state_write: path=$STATE_FILE exists=$([ -f "$STATE_FILE" ] && echo yes || echo no)"
 
 # ─── Format coaching message ──────────────────────────────────────────────────
 case "$INTERVENTION_TYPE" in
@@ -148,6 +175,9 @@ FULL_MSG="${PREFIX} ${FEEDBACK}"
 # ─── Build and output hookSpecificOutput (jq handles all JSON escaping) ───────
 CONTEXT=$(printf '<prompt-coaching-note>\nBefore responding, output this exact line verbatim, then proceed with your answer:\n\n%s\n</prompt-coaching-note>' "$FULL_MSG")
 
+_COACHING_EMITTED=true   # prevent reset trap from firing
+_EXIT_REASON="coaching-emitted"
+DBG "STDOUT: emitting coaching additionalContext (${#CONTEXT} chars)"
 "$JQ" -n \
     --arg context "$CONTEXT" \
     '{hookSpecificOutput: {hookEventName: "UserPromptSubmit", additionalContext: $context}}'

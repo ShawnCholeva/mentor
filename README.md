@@ -17,8 +17,8 @@ Everything is logged to `~/.claude/coaching/interactions.jsonl`.
 ## Installation
 
 ```bash
-/plugin marketplace add ShawnCholeva/mentor
-/plugin install mentor@ShawnCholeva/mentor
+/plugin marketplace add ShawnCholeva/ai-plugins
+/plugin install mentor@shawn-choleva-ai
 ```
 
 Start a new session after installing — the coaching hooks activate automatically, no configuration needed.

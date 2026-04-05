@@ -157,9 +157,14 @@ FEEDBACK=$(         echo "$JUDGMENT" | "$JQ" -r '.message // ""'      2>/dev/nul
 
 # ─── Write session state ─────────────────────────────────────────────────────
 NOW_EPOCH=$(date +%s)
-"$JQ" -n --argjson ts "$NOW_EPOCH" '{last_intervention_ts: $ts}' \
+"$JQ" -n \
+    --argjson ts "$NOW_EPOCH" \
+    --argjson coaching_triggered true \
+    --arg     type    "$INTERVENTION_TYPE" \
+    --arg     message "$FEEDBACK" \
+    '{last_intervention_ts: $ts, coaching_triggered: $coaching_triggered, type: $type, message: $message}' \
     > "$STATE_FILE" 2>/dev/null || true
-DBG "state_write: path=$STATE_FILE exists=$([ -f "$STATE_FILE" ] && echo yes || echo no)"
+DBG "state_write: path=$STATE_FILE coaching=true type=$INTERVENTION_TYPE exists=$([ -f "$STATE_FILE" ] && echo yes || echo no)"
 
 # ─── Format coaching message ──────────────────────────────────────────────────
 case "$INTERVENTION_TYPE" in

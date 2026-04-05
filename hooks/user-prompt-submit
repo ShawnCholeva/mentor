@@ -155,7 +155,7 @@ INTERVENTION_TYPE=$(echo "$JUDGMENT" | "$JQ" -r '.type    // "nudge"' 2>/dev/nul
 FEEDBACK=$(         echo "$JUDGMENT" | "$JQ" -r '.message // ""'      2>/dev/null || echo "")
 [[ -z "$FEEDBACK" ]] && { _EXIT_REASON="empty-feedback"; exit 0; }
 
-# ─── Write session state ─────────────────────────────────────────────────────
+# ─── Write session state (only reached when coaching fires; coaching_triggered is always true here) ─
 NOW_EPOCH=$(date +%s)
 "$JQ" -n \
     --argjson ts "$NOW_EPOCH" \

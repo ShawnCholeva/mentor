@@ -21,6 +21,7 @@ MODE=$(         echo "$INPUT" | "$JQ" -r '.mode        // "chill"' 2>/dev/null |
 PHILOSOPHY=$(   echo "$INPUT" | "$JQ" -r '.philosophy  // ""'      2>/dev/null || echo "")
 USER_MODEL=$(   echo "$INPUT" | "$JQ" -c '.user_model  // {}'      2>/dev/null || echo "{}")
 HISTORY=$(      echo "$INPUT" | "$JQ" -r '.history     // [] | .[]' 2>/dev/null || echo "")
+TURN_COUNT=$(   echo "$INPUT" | "$JQ" '.history // [] | length'         2>/dev/null || echo "0")
 
 [[ -z "$PROMPT" ]] && { echo "$FALLBACK"; exit 0; }
 
@@ -89,6 +90,14 @@ Keep messages under 100 words. Write like a person, not a linter. Vary your phra
 7. Mode is \"${MODE}\". In \"chill\" mode, only intervene on high-confidence issues (vague prompts, missing diagnostics). In \"elite\" mode, also intervene on subtler issues (missing output format, scope underestimation).
 8. Prefer one precise observation over multiple generic suggestions.
 9. If you notice a pattern across the recent prompt history (repeated vagueness, improving specificity, etc.), weave that observation in naturally. Do not start with \"Pattern:\" or label it mechanically.
+
+## Conversation Awareness
+This is turn ${TURN_COUNT} of the conversation (${TURN_COUNT} previous prompts in session history).
+
+If turn count > 1, the user is mid-conversation. Claude already has the full conversation context.
+- References to prior discussion (\"option 1\", \"the first one\", \"tell me more\", \"that approach\", \"both\", \"yes do X\", \"I'd like to see\") are normal follow-ups. Do NOT flag these as lacking context.
+- Short prompts (under 6 words) at turn > 1 are conversational, not vague. Only intervene if the prompt is truly ambiguous even WITH full conversation context.
+- Only intervene on mid-conversation prompts for substantive issues: scope creep, missing diagnostics for debugging, fundamentally flawed approach. Missing context is never a valid reason to intervene after turn 1.
 
 Respond with ONLY a JSON object, no markdown, no explanation:
 {\"intervene\": false}

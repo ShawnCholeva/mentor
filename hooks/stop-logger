@@ -39,15 +39,12 @@ STATE_FILE="${COACHING_DIR}/session-${SESSION_ID}.tmp"
 COACHING_TRIGGERED="false"
 INTERVENTION_TYPE="null"
 COACHING_MESSAGE=""
-TAGS="[]"
 
 if [[ -f "$STATE_FILE" ]]; then
     STATE=$(cat "$STATE_FILE")
     COACHING_TRIGGERED=$(echo "$STATE" | "$JQ" -r 'if .coaching_triggered then "true" else "false" end' 2>/dev/null || echo "false")
-    TAGS=$(             echo "$STATE" | "$JQ" -c '.tags  // []'                                         2>/dev/null || echo "[]")
     INTERVENTION_TYPE=$(echo "$STATE" | "$JQ" -r 'if .type then ("\"" + .type + "\"") else "null" end'  2>/dev/null || echo "null")
     COACHING_MESSAGE=$( echo "$STATE" | "$JQ" -r '.message // ""'                                       2>/dev/null || echo "")
-    rm -f "$STATE_FILE"
 fi
 
 # ─── Count user turns from transcript ────────────────────────────────────────
@@ -60,6 +57,7 @@ fi
 # ─── Classify intent from transcript ─────────────────────────────────────────
 INTENT="unknown"
 SKILL_USED="null"
+LAST_PROMPT=""
 
 if [[ -n "$TRANSCRIPT_PATH" ]] && [[ -f "$TRANSCRIPT_PATH" ]]; then
     LAST_PROMPT=$(grep '"role":"user"\|"role": "user"' "$TRANSCRIPT_PATH" 2>/dev/null | \
@@ -69,21 +67,19 @@ if [[ -n "$TRANSCRIPT_PATH" ]] && [[ -f "$TRANSCRIPT_PATH" ]]; then
             if type == "array" then [.[].text? // ""] | join(" ")
             else (. // "" | tostring)
             end' 2>/dev/null | head -c 500 || echo "")
+fi
 
-    if [[ -n "$LAST_PROMPT" ]]; then
-        if echo "$LAST_PROMPT" | grep -qE "^/[a-z]"; then
-            _skill=$(echo "$LAST_PROMPT" | grep -oE "^/[a-z][a-z0-9:-]+" | head -1)
-            SKILL_USED="\"${_skill}\""
-            INTENT="skill-invoked"
-        fi
-
-        if [[ "$INTENT" == "unknown" ]]; then
-            WORD_COUNT=$(echo "$LAST_PROMPT" | wc -w | tr -d '[:space:]')
-            if [[ "$WORD_COUNT" -lt 6 ]]; then
-                INTENT="vague"
-            else
-                INTENT="direct"
-            fi
+if [[ -n "$LAST_PROMPT" ]]; then
+    if echo "$LAST_PROMPT" | grep -qE "^/[a-z]"; then
+        _skill=$(echo "$LAST_PROMPT" | grep -oE "^/[a-z][a-z0-9:-]+" | head -1)
+        SKILL_USED="\"${_skill}\""
+        INTENT="skill-invoked"
+    else
+        WORD_COUNT=$(echo "$LAST_PROMPT" | wc -w | tr -d '[:space:]')
+        if [[ "$WORD_COUNT" -lt 6 ]]; then
+            INTENT="vague"
+        else
+            INTENT="direct"
         fi
     fi
 fi
@@ -95,6 +91,9 @@ ENTRY_ID=$(uuidgen 2>/dev/null || \
            printf '%s-%s' "$SESSION_ID" "$TIMESTAMP")
 
 # ─── Append log entry (jq builds valid JSON, no manual escaping) ─────────────
+# Truncate prompt for log entry
+PROMPT_SUMMARY="${LAST_PROMPT:0:200}"
+
 "$JQ" -n -c \
     --arg     id                "$ENTRY_ID" \
     --arg     session_id        "$SESSION_ID" \
@@ -102,9 +101,9 @@ ENTRY_ID=$(uuidgen 2>/dev/null || \
     --arg     intent            "$INTENT" \
     --argjson skill_used        "$SKILL_USED" \
     --argjson turn_count        "$TURN_COUNT" \
+    --arg     prompt_summary    "$PROMPT_SUMMARY" \
     --argjson coaching_triggered "$COACHING_TRIGGERED" \
     --argjson intervention_type "$INTERVENTION_TYPE" \
-    --argjson tags              "$TAGS" \
     '{
         id:                 $id,
         session_id:         $session_id,
@@ -112,9 +111,9 @@ ENTRY_ID=$(uuidgen 2>/dev/null || \
         intent:             $intent,
         skill_used:         $skill_used,
         turn_count:         $turn_count,
+        prompt_summary:     $prompt_summary,
         coaching_triggered: $coaching_triggered,
-        intervention_type:  $intervention_type,
-        tags:               $tags
+        intervention_type:  $intervention_type
     }' >> "$LOG_FILE" 2>/dev/null || true
 
 # ─── Trigger user model update every 5th interaction ─────────────────────────

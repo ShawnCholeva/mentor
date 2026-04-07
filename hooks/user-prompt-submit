@@ -116,6 +116,31 @@ if [[ -f "$HISTORY_FILE" ]] && [[ -n "$SESSION_ID" ]]; then
     fi
 fi
 
+# ─── Guard: short mid-conversation follow-ups ───────────────────────────────
+# When the user is mid-conversation (prior prompts exist), short prompts
+# are almost always answers to questions Claude asked. The evaluator can't
+# see Claude's responses, so it can't verify — skip evaluation entirely.
+TURN_COUNT=$(echo "$HISTORY_JSON" | "$JQ" 'length' 2>/dev/null || echo "0")
+if [[ "$TURN_COUNT" -gt 0 ]]; then
+    WORD_COUNT=$(echo "$PROMPT" | wc -w | tr -d ' ')
+    if [[ "$WORD_COUNT" -le 4 ]]; then
+        DBG "short-followup: skipping (${WORD_COUNT} words, turn $((TURN_COUNT + 1)))"
+        _EXIT_REASON="short-followup"
+        exit 0
+    fi
+    # Option-selection patterns: "approach A", "option 2", "the first one", etc.
+    if echo "$PROMPT_TRIMMED" | grep -qiE "^(option|approach|choice|plan|alternative) [a-z0-9]$"; then
+        DBG "option-selection: skipping mid-conversation option pick"
+        _EXIT_REASON="option-selection"
+        exit 0
+    fi
+    if echo "$PROMPT_TRIMMED" | grep -qiE "^the (first|second|third|last|other) (one|option|approach)$"; then
+        DBG "option-selection: skipping mid-conversation selection"
+        _EXIT_REASON="option-selection"
+        exit 0
+    fi
+fi
+
 # ─── Bootstrap: seed defaults if missing ─────────────────────────────────────
 if [[ ! -f "$PHILOSOPHY_FILE" ]] && [[ -n "$DEFAULTS_DIR" ]] && [[ -f "${DEFAULTS_DIR}/philosophy.md" ]]; then
     cp "${DEFAULTS_DIR}/philosophy.md" "$PHILOSOPHY_FILE" 2>/dev/null || true

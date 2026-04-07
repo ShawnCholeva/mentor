@@ -44,11 +44,21 @@ if [[ "$HAS_MODEL" == "true" ]]; then
     WEAKNESSES=$(echo "$USER_MODEL" | "$JQ" -r '.weaknesses | join(", ")' 2>/dev/null || echo "")
     FOCUS=$(     echo "$USER_MODEL" | "$JQ" -r '.current_focus   // ""'   2>/dev/null || echo "")
     PROGRESS=$(  echo "$USER_MODEL" | "$JQ" -r '.recent_progress // ""'   2>/dev/null || echo "")
+    INTERVENTION_HIST=$(echo "$USER_MODEL" | "$JQ" -r '
+        (.intervention_history // [])[-10:] |
+        if length > 0 then
+            map("- " + .) | join("\n")
+        else
+            "No coaching history yet."
+        end' 2>/dev/null || echo "No coaching history yet.")
     MODEL_SECTION="## User Profile
 Strengths: ${STRENGTHS}
 Weaknesses: ${WEAKNESSES}
 Current focus: ${FOCUS}
-Recent progress: ${PROGRESS}"
+Recent progress: ${PROGRESS}
+
+Intervention history (recent coaching):
+${INTERVENTION_HIST}"
 else
     MODEL_SECTION="## User Profile
 No profile yet — this is a new user. Be conservative with interventions."
@@ -101,6 +111,14 @@ When you intervene, classify the friction type and tailor your message according
 - missing_skill: The prompt describes work that matches a known skill pattern (debugging, testing, design, code review) but no skill was invoked. Coach toward: the specific skill category that would help.
 
 If the issue doesn't fit any category, omit the friction field entirely. Do not force a classification.
+
+## Reinforcement Triggers
+Fire reinforcement when you see genuine growth:
+- The user previously struggled with something (see intervention history) and this prompt shows improvement in that area. Name the specific improvement — e.g., \"You included the error output and file path this time — that's exactly what was missing in your last few prompts.\"
+- The prompt exemplifies a philosophy principle well. Name which principle and why it matters.
+- The user invoked a relevant skill before starting work, especially if this is a new behavior.
+
+Reinforcement messages must reference the specific improvement. Generic praise (\"Good prompt!\", \"Nice work!\") is worse than no reinforcement — it teaches the user nothing. Be specific about WHAT improved and WHY it matters.
 
 ## Skill Availability
 If the user's prompt describes debugging, testing, building, designing, or reviewing work AND they did not invoke a skill (no / prefix), set \"skill_available\": true in your response. Otherwise omit it.

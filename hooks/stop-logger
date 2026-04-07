@@ -39,12 +39,16 @@ STATE_FILE="${COACHING_DIR}/session-${SESSION_ID}.tmp"
 COACHING_TRIGGERED="false"
 INTERVENTION_TYPE="null"
 COACHING_MESSAGE=""
+FRICTION=""
+SKILL_AVAILABLE="false"
 
 if [[ -f "$STATE_FILE" ]]; then
     STATE=$(cat "$STATE_FILE")
     COACHING_TRIGGERED=$(echo "$STATE" | "$JQ" -r 'if .coaching_triggered then "true" else "false" end' 2>/dev/null || echo "false")
     INTERVENTION_TYPE=$(echo "$STATE" | "$JQ" -r 'if .type then ("\"" + .type + "\"") else "null" end'  2>/dev/null || echo "null")
     COACHING_MESSAGE=$( echo "$STATE" | "$JQ" -r '.message // ""'                                       2>/dev/null || echo "")
+    FRICTION=$(         echo "$STATE" | "$JQ" -r '.friction // ""'                                      2>/dev/null || echo "")
+    SKILL_AVAILABLE=$(  echo "$STATE" | "$JQ" -r 'if .skill_available then "true" else "false" end'      2>/dev/null || echo "false")
 fi
 
 # ─── Count user turns from transcript ────────────────────────────────────────
@@ -52,6 +56,16 @@ TURN_COUNT=1
 if [[ -n "$TRANSCRIPT_PATH" ]] && [[ -f "$TRANSCRIPT_PATH" ]]; then
     TURN_COUNT=$(grep -c '"role":"user"\|"role": "user"' "$TRANSCRIPT_PATH" 2>/dev/null || echo "1")
     [[ "$TURN_COUNT" -lt 1 ]] && TURN_COUNT=1
+fi
+
+# ─── Estimate session outcome from transcript ──────────────────────────────
+SESSION_OUTCOME="unknown"
+if [[ -n "$TRANSCRIPT_PATH" ]] && [[ -f "$TRANSCRIPT_PATH" ]]; then
+    if grep -q '"git commit"\|"git add"' "$TRANSCRIPT_PATH" 2>/dev/null; then
+        SESSION_OUTCOME="achieved"
+    elif tail -c 5000 "$TRANSCRIPT_PATH" 2>/dev/null | grep -qiE '"error"|"fail"|traceback' 2>/dev/null; then
+        SESSION_OUTCOME="not_achieved"
+    fi
 fi
 
 # ─── Classify intent from transcript ─────────────────────────────────────────
@@ -94,6 +108,9 @@ ENTRY_ID=$(uuidgen 2>/dev/null || \
 # Truncate prompt for log entry
 PROMPT_SUMMARY="${LAST_PROMPT:0:200}"
 
+FRICTION_TYPE="null"
+[[ -n "$FRICTION" ]] && FRICTION_TYPE="\"${FRICTION}\""
+
 "$JQ" -n -c \
     --arg     id                "$ENTRY_ID" \
     --arg     session_id        "$SESSION_ID" \
@@ -104,6 +121,9 @@ PROMPT_SUMMARY="${LAST_PROMPT:0:200}"
     --arg     prompt_summary    "$PROMPT_SUMMARY" \
     --argjson coaching_triggered "$COACHING_TRIGGERED" \
     --argjson intervention_type "$INTERVENTION_TYPE" \
+    --argjson friction_type     "$FRICTION_TYPE" \
+    --argjson skill_available   "$SKILL_AVAILABLE" \
+    --arg     session_outcome   "$SESSION_OUTCOME" \
     '{
         id:                 $id,
         session_id:         $session_id,
@@ -113,7 +133,10 @@ PROMPT_SUMMARY="${LAST_PROMPT:0:200}"
         turn_count:         $turn_count,
         prompt_summary:     $prompt_summary,
         coaching_triggered: $coaching_triggered,
-        intervention_type:  $intervention_type
+        intervention_type:  $intervention_type,
+        friction_type:      $friction_type,
+        skill_available:    $skill_available,
+        session_outcome:    $session_outcome
     }' >> "$LOG_FILE" 2>/dev/null || true
 
 # ─── Trigger user model update every 5th interaction ─────────────────────────

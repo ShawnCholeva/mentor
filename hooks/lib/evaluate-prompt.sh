@@ -2,7 +2,7 @@
 # evaluate-prompt.sh — Prompt evaluator using claude -p
 #
 # Input:  JSON via stdin {prompt, mode, philosophy, user_model, history}
-# Output: JSON judgment  {intervene: bool, [type, message]}
+# Output: JSON judgment  {intervene: bool, [type, message, friction?, skill_available?]}
 # Always exits 0. On any error outputs {"intervene":false}.
 
 set -uo pipefail
@@ -91,6 +91,20 @@ Keep messages under 100 words. Write like a person, not a linter. Vary your phra
 8. Prefer one precise observation over multiple generic suggestions.
 9. If you notice a pattern across the recent prompt history (repeated vagueness, improving specificity, etc.), weave that observation in naturally. Do not start with \"Pattern:\" or label it mechanically.
 
+## Friction Categories
+When you intervene, classify the friction type and tailor your message accordingly. Include a \"friction\" field in your JSON response.
+
+- vague_request: The prompt lacks specifics — no file paths, no expected behavior, no error output. Coach toward: what file, expected vs actual behavior, and any error output.
+- wrong_approach: The user is heading down a path that won't work or is inefficient. Coach toward: stepping back, checking docs, or rethinking the strategy.
+- missing_diagnostics: The user is debugging without sharing error messages, logs, or relevant file paths. Coach toward: sharing the error output and relevant context before Claude starts exploring.
+- scope_drift: The task has grown beyond what was originally asked or the user is trying to do too much at once. Coach toward: scoping down, breaking into smaller pieces, or resetting.
+- missing_skill: The prompt describes work that matches a known skill pattern (debugging, testing, design, code review) but no skill was invoked. Coach toward: the specific skill category that would help.
+
+If the issue doesn't fit any category, omit the friction field entirely. Do not force a classification.
+
+## Skill Availability
+If the user's prompt describes debugging, testing, building, designing, or reviewing work AND they did not invoke a skill (no / prefix), set \"skill_available\": true in your response. Otherwise omit it.
+
 ## Conversation Awareness
 This is turn ${TURN_COUNT} of the conversation (${TURN_COUNT} previous prompts in session history).
 
@@ -105,7 +119,8 @@ If turn count > 1, the user is mid-conversation. Claude already has the full con
 Respond with ONLY a JSON object, no markdown, no explanation:
 {\"intervene\": false}
 or
-{\"intervene\": true, \"type\": \"nudge|correction|challenge|reinforcement\", \"message\": \"your coaching message here\"}"
+{\"intervene\": true, \"type\": \"nudge|correction|challenge|reinforcement\", \"message\": \"your coaching message here\", \"friction\": \"vague_request|wrong_approach|missing_diagnostics|scope_drift|missing_skill\", \"skill_available\": true}
+The \"friction\" and \"skill_available\" fields are optional — include them only when applicable."
 
 # ─── Build user message with optional history ────────────────────────────────
 if [[ -n "$HISTORY" ]]; then
@@ -153,6 +168,8 @@ JUDGMENT=$(printf '%s' "$TEXT" | "$JQ" -e '
           and (.type | IN("nudge","correction","challenge","reinforcement"))
           and (.message | type == "string" and length > 0))
     then {intervene: true, type: .type, message: .message}
+         + (if .friction and (.friction | IN("vague_request","wrong_approach","missing_diagnostics","scope_drift","missing_skill")) then {friction: .friction} else {} end)
+         + (if .skill_available then {skill_available: true} else {} end)
     else error("invalid")
     end' 2>/dev/null) || { echo "$FALLBACK"; exit 0; }
 

@@ -151,6 +151,24 @@ if [[ ! -f "$USER_MODEL_FILE" ]]; then
         > "$USER_MODEL_FILE" 2>/dev/null || true
 fi
 
+# ─── Seed user model from insights if empty and facets available ────────────
+SEED_SCRIPT="${SCRIPT_DIR}/lib/seed-user-model.sh"
+if [[ -f "$SEED_SCRIPT" ]] && [[ -f "$USER_MODEL_FILE" ]]; then
+    MODEL_EMPTY=$("$JQ" -r '
+        if ((.strengths // []) | length == 0)
+           and ((.weaknesses // []) | length == 0)
+           and ((.current_focus // "") | length == 0)
+        then "true" else "false" end' "$USER_MODEL_FILE" 2>/dev/null || echo "false")
+    FACETS_DIR="${HOME}/.claude/usage-data/facets"
+    if [[ "$MODEL_EMPTY" == "true" ]] && [[ -d "$FACETS_DIR" ]]; then
+        FACET_COUNT=$(find "$FACETS_DIR" -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
+        if [[ "$FACET_COUNT" -gt 0 ]]; then
+            DBG "seeding: model empty, ${FACET_COUNT} facets available — running seeder"
+            timeout 10 bash "$SEED_SCRIPT" 2>/dev/null || true
+        fi
+    fi
+fi
+
 # ─── Load philosophy and user model ──────────────────────────────────────────
 PHILOSOPHY=""
 [[ -f "$PHILOSOPHY_FILE" ]] && PHILOSOPHY=$(cat "$PHILOSOPHY_FILE" 2>/dev/null || echo "")

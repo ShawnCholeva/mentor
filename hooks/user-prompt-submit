@@ -180,16 +180,24 @@ INTERVENTION_TYPE=$(echo "$JUDGMENT" | "$JQ" -r '.type    // "nudge"' 2>/dev/nul
 FEEDBACK=$(         echo "$JUDGMENT" | "$JQ" -r '.message // ""'      2>/dev/null || echo "")
 [[ -z "$FEEDBACK" ]] && { _EXIT_REASON="empty-feedback"; exit 0; }
 
+FRICTION=$(         echo "$JUDGMENT" | "$JQ" -r '.friction         // ""'    2>/dev/null || echo "")
+SKILL_AVAILABLE=$(  echo "$JUDGMENT" | "$JQ" -r '.skill_available  // false' 2>/dev/null || echo "false")
+
 # ─── Write session state (only reached when coaching fires; coaching_triggered is always true here) ─
 NOW_EPOCH=$(date +%s)
+FRICTION_ARGS=()
+[[ -n "$FRICTION" ]] && FRICTION_ARGS=(--arg friction "$FRICTION")
 "$JQ" -n \
     --argjson ts "$NOW_EPOCH" \
     --argjson coaching_triggered true \
     --arg     type    "$INTERVENTION_TYPE" \
     --arg     message "$FEEDBACK" \
-    '{last_intervention_ts: $ts, coaching_triggered: $coaching_triggered, type: $type, message: $message}' \
+    --argjson skill_available "$SKILL_AVAILABLE" \
+    "${FRICTION_ARGS[@]}" \
+    '{last_intervention_ts: $ts, coaching_triggered: $coaching_triggered, type: $type, message: $message, skill_available: $skill_available}
+     + (if $ARGS.named | has("friction") then {friction: $friction} else {} end)' \
     > "$STATE_FILE" 2>/dev/null || true
-DBG "state_write: path=$STATE_FILE coaching=true type=$INTERVENTION_TYPE exists=$([ -f "$STATE_FILE" ] && echo yes || echo no)"
+DBG "state_write: path=$STATE_FILE coaching=true type=$INTERVENTION_TYPE friction=${FRICTION:-none} exists=$([ -f "$STATE_FILE" ] && echo yes || echo no)"
 
 # ─── Format coaching message ──────────────────────────────────────────────────
 case "$INTERVENTION_TYPE" in

@@ -45,7 +45,7 @@ Builds on Phase 1's accurate data pipeline (v3.2 spec). Phase 1 must be shipped 
 {"intervene": true, "type": "correction", "friction": "vague_request", "message": "..."}
 ```
 
-Valid friction values: `vague_request`, `wrong_approach`, `missing_diagnostics`, `scope_drift`, `premature_exit`. When the issue doesn't fit a known category, the evaluator omits the `friction` field.
+Valid friction values: `vague_request`, `wrong_approach`, `missing_diagnostics`, `scope_drift`, `missing_skill`. When the issue doesn't fit a known category, the evaluator omits the `friction` field.
 
 Friction classification is LLM-only — it happens inside the evaluator when coaching fires. Non-intervention prompts log `friction_type: null` without needing classification.
 

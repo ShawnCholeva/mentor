@@ -139,6 +139,21 @@ FRICTION_TYPE="null"
         session_outcome:    $session_outcome
     }' >> "$LOG_FILE" 2>/dev/null || true
 
+# ─── Trigger insights sync if facets are newer than weights ─────────────────
+FACETS_DIR="${HOME}/.claude/usage-data/facets"
+WEIGHTS_FILE="${COACHING_DIR}/priority-weights.json"
+SYNC_SCRIPT="${SCRIPT_DIR}/lib/sync_insights.py"
+
+if [[ -d "$FACETS_DIR" ]] && [[ -f "$SYNC_SCRIPT" ]]; then
+    NEWEST_FACET=$(find "$FACETS_DIR" -name '*.json' -printf '%T@\n' 2>/dev/null | sort -rn | head -1 | cut -d. -f1)
+    LAST_SYNC=0
+    [[ -f "$WEIGHTS_FILE" ]] && LAST_SYNC=$("$JQ" -r '.last_sync // 0' "$WEIGHTS_FILE" 2>/dev/null || echo "0")
+
+    if [[ -n "$NEWEST_FACET" ]] && [[ "$NEWEST_FACET" -gt "$LAST_SYNC" ]]; then
+        python3 "$SYNC_SCRIPT" "$FACETS_DIR" "$WEIGHTS_FILE" &
+    fi
+fi
+
 # ─── Trigger user model update every 5th interaction ─────────────────────────
 if [[ -f "$UPDATE_SCRIPT" ]]; then
     INTERACTION_COUNT=$(wc -l < "$LOG_FILE" 2>/dev/null | tr -d '[:space:]' || echo "0")

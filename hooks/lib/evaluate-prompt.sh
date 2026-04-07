@@ -64,6 +64,22 @@ else
 No profile yet — this is a new user. Be conservative with interventions."
 fi
 
+# ─── Build priority weights section (from insights sync) ────────────────────
+PRIORITY_SECTION=""
+PRIORITY_WEIGHTS_FILE="${HOME}/.claude/coaching/priority-weights.json"
+if [[ -f "$PRIORITY_WEIGHTS_FILE" ]]; then
+    PRIORITY_LIST=$(cat "$PRIORITY_WEIGHTS_FILE" 2>/dev/null | "$JQ" -r '
+        .top_friction // [] |
+        map("- " + .pattern + " (" + .weight + " priority — " + (.count | tostring) + " occurrences across sessions)") |
+        join("\n")' 2>/dev/null || echo "")
+    if [[ -n "$PRIORITY_LIST" ]]; then
+        PRIORITY_SECTION="## Priority Patterns (from usage analysis)
+Your attention should be weighted toward these friction patterns:
+${PRIORITY_LIST}
+Be more sensitive to these patterns. Lower-priority issues can still trigger interventions but require higher confidence."
+    fi
+fi
+
 PHILO_TEXT="${PHILOSOPHY:-Clarity upfront is better than iteration later. Think in systems, not tasks.}"
 
 # Truncate prompt to 500 chars
@@ -75,7 +91,9 @@ SYSTEM_PROMPT="You are a prompt coach for a Claude Code user. You evaluate their
 ${PHILO_TEXT}
 
 ${MODEL_SECTION}
-## Intervention Types
+${PRIORITY_SECTION:+${PRIORITY_SECTION}
+
+}## Intervention Types
 - nudge: Light suggestion. The prompt is okay but could be better. Tone: friendly pointer.
 - correction: Clear gap worth addressing. The prompt has a flaw that will lead to a worse outcome. Tone: constructive, specific.
 - challenge: Strong pushback. The user's approach or thinking has a real problem. Tone: direct but respectful — explain WHY the thinking is flawed, not just what to fix.

@@ -104,7 +104,7 @@ INSTALLED_PLUGINS="${HOME}/.claude/plugins/installed_plugins.json"
 if [[ -n "$SESSION_ID" ]] && [[ -f "$STATE_FILE" ]]; then
     # Reuse cached catalog from session state
     SKILL_CATALOG=$("$JQ" -c '.skill_catalog // []' "$STATE_FILE" 2>/dev/null || echo "[]")
-    SKILL_CATALOG_BUILT=true
+    [[ "$SKILL_CATALOG" != "[]" ]] && SKILL_CATALOG_BUILT=true
 fi
 
 if [[ "$SKILL_CATALOG_BUILT" == "false" ]] && [[ -f "$INSTALLED_PLUGINS" ]]; then
@@ -127,6 +127,7 @@ if [[ "$SKILL_CATALOG_BUILT" == "false" ]] && [[ -f "$INSTALLED_PLUGINS" ]]; the
             in_frontmatter=false
             in_desc=false
             while IFS= read -r line; do
+                line="${line%$'\r'}"
                 if [[ "$line" == "---" ]]; then
                     if [[ "$in_frontmatter" == "true" ]]; then
                         break
@@ -175,6 +176,7 @@ if [[ "$SKILL_CATALOG_BUILT" == "false" ]] && [[ -f "$INSTALLED_PLUGINS" ]]; the
 
     SKILL_CATALOG="$CATALOG_ENTRIES"
 fi
+DBG "skill_catalog: built=${SKILL_CATALOG_BUILT} entries=$(echo "$SKILL_CATALOG" | "$JQ" 'length' 2>/dev/null || echo '?')"
 
 # ─── Guard: evaluate script must exist ───────────────────────────────────────
 [[ ! -f "$EVALUATE_SCRIPT" ]] && { _EXIT_REASON="no-evaluator"; exit 0; }

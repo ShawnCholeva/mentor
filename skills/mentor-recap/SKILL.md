@@ -36,7 +36,8 @@ Parse the JSONL: each line is one interaction entry with fields:
 - `coaching_triggered` — whether Mentor intervened
 - `intervention_type` — type of intervention: `nudge`, `correction`, `challenge`, `reinforcement`, or null
 - `friction_type` — friction category when coaching fired: `vague_request`, `wrong_approach`, `missing_diagnostics`, `scope_drift`, `missing_skill`, or null
-- `skill_available` — whether a relevant skill was available but not invoked
+- `skill_suggested` — specific skill the mentor recommended (e.g., `/superpowers:systematic-debugging`, or null)
+- `skill_gap_description` — one-sentence sketch of an unmet skill need (or null)
 - `session_outcome` — estimated outcome: `achieved`, `not_achieved`, or `unknown`
 - `timestamp` — Unix epoch (seconds)
 
@@ -63,7 +64,9 @@ Calculate:
 | Intervention breakdown | Count by `intervention_type` (nudge/correction/challenge/reinforcement) |
 | Friction distribution | Count by `friction_type` field (non-null entries only) |
 | Session outcomes | Count by `session_outcome` field |
-| Skill availability | Count entries where `skill_available` = true but `skill_used` is null |
+| Skill suggestions | Count and rank each distinct `skill_suggested` value (non-null) |
+| Skill adoption | For each `skill_suggested` value, count how many times that same skill appears as `skill_used` in subsequent entries |
+| Skill gaps | Collect all `skill_gap_description` values (non-null) for pattern analysis |
 
 ---
 
@@ -77,6 +80,8 @@ Look for:
 4. **Mentor frequency** — if coaching triggered on >40% of prompts, threshold may be too sensitive
 5. **Intervention type balance** — heavy correction/challenge with no reinforcement may indicate overly strict thresholds, or consistent issues
 6. **User model alignment** — do the weaknesses in the model match the patterns in the log? Flag any discrepancy.
+7. **Skill suggestion pattern** — if the same skill is suggested 3+ times, the user may not know about it or may be resisting it. Note the adoption rate.
+8. **Skill gap clustering** — group `skill_gap_description` entries by theme. If 2+ entries describe similar unmet needs, this is a gap worth calling out.
 
 ---
 
@@ -121,6 +126,29 @@ Session outcomes: [X] achieved · [Y] not_achieved · [Z] unknown
 [Ranked list of skills used and how often, or "No skill invocations recorded" if none]
 [Direct prompts: N]
 
+### Skill Awareness
+**Suggestions made:**
+[For each skill_suggested value that appeared 2+ times:]
+- **/[skill-name]**: suggested [N] times, adopted [M] times
+  [If adoption is low: "You may not be aware of this skill or may not find it useful — it triggers when [trigger description]"]
+
+[If no suggestions were made: "The mentor didn't suggest any specific skills. This may mean your skill usage is already good, or the skill catalog wasn't loaded (check /mentor status)."]
+
+**Unused installed skills:**
+[Skills that never appeared in skill_used or skill_suggested — these may not be relevant to your work, or you may be missing opportunities]
+
+### Skill Gaps
+[If skill_gap_description entries exist:]
+[Group by theme and rank by frequency:]
+
+You hit [N] sessions involving [theme] with no skill coverage.
+
+A "[suggested-name]" skill could help here — triggered when [trigger condition]. It would enforce: [workflow sketch from the gap descriptions].
+
+[For top 1-2 gap themes only. If only 1 occurrence of a gap, don't surface it — wait for a pattern.]
+
+[If no gap descriptions: "No skill gaps identified yet. As you use Claude more, the mentor will flag areas where a custom skill could help."]
+
 ### Efficiency
 Avg turns per task: [N]
 High-iteration tasks (4+ turns): [X%]
@@ -149,4 +177,5 @@ End with one of:
 - If Mentor trigger rate is high: "Run `/mentor chill` to reduce intervention frequency."
 - If turn count is high and vagueness is the top friction type: "Your prompts may benefit from more upfront structure — goal, constraints, output format."
 - If user model weaknesses are stale (last intervention_history entry is old): "The user model may be stale. Keep using Claude normally and it will update every 5 interactions."
+- If skill gaps were identified: "You have recurring [theme] work with no skill coverage. Consider building a custom skill — the gap analysis above has a starting point."
 - If no strong patterns: "Things look solid. Keep an eye on turn count as a leading indicator."

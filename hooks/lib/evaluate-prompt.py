@@ -31,6 +31,7 @@ def main():
     philosophy = payload.get("philosophy", "").strip()
     user_model_raw = payload.get("user_model", "{}")
     api_key = payload.get("api_key", "").strip()
+    skill_catalog = payload.get("skill_catalog", [])
 
     if not prompt:
         print(FALLBACK)
@@ -64,13 +65,26 @@ Recent progress: {user_model.get("recent_progress", "none")}
     else:
         model_section = "## User Profile\nNo profile yet — this is a new user. Be conservative with interventions."
 
+    skill_section = ""
+    if skill_catalog:
+        skill_lines = "\n".join(
+            f"- /{s['name']} — {s['trigger']}" for s in skill_catalog if s.get("name") and s.get("trigger")
+        )
+        if skill_lines:
+            skill_section = f"""## Available Skills
+The user has these skills installed. When their prompt describes work that matches a skill's trigger and they did not invoke it (no / prefix), weave a suggestion into your coaching message.
+
+{skill_lines}
+
+"""
+
     system_prompt = f"""You are a coaching evaluator for a Claude Code operator. Your job is to decide whether to intervene on a user's prompt before it reaches Claude.
 
 ## Philosophy
 {philosophy if philosophy else "Clarity upfront is better than iteration later. Think in systems, not tasks."}
 
 {model_section}
-## Intervention Types
+{skill_section}## Intervention Types
 - nudge: Light suggestion. Small improvement opportunity. Use when the prompt is okay but could be better.
 - correction: Clear mistake worth addressing. Use when the prompt has a specific flaw that will lead to a worse outcome.
 - challenge: Strong pushback. Use when the user's thinking is flawed or they are approaching the problem wrong.
@@ -88,10 +102,22 @@ Recent progress: {user_model.get("recent_progress", "none")}
 9. When you challenge, explain WHY the thinking is flawed — not just what to fix.
 10. Prefer one precise observation over multiple generic suggestions.
 
+## Skill Awareness
+When the user's prompt describes work that matches an installed skill (see Available Skills above) and they did not invoke it (no / prefix):
+- Set "skill_suggested": "/skill-name" in your response
+- Weave the suggestion naturally into your coaching message
+
+When the prompt describes work that NO installed skill covers, but a skill would clearly help:
+- Set "skill_gap_description" with a one-sentence sketch of what the skill would do
+- Only mention the gap in your coaching message if confidence is high
+
+Do not set both fields on the same prompt.
+
 Respond with ONLY a JSON object, no markdown, no explanation:
 {{"intervene": false}}
 or
-{{"intervene": true, "type": "nudge|correction|challenge|reinforcement", "message": "your coaching message here"}}"""
+{{"intervene": true, "type": "nudge|correction|challenge|reinforcement", "message": "your coaching message here", "skill_suggested": "/skill-name", "skill_gap_description": "one-sentence sketch"}}
+The "skill_suggested" and "skill_gap_description" fields are optional."""
 
     user_message = f"""Evaluate this prompt:
 ---
@@ -128,6 +154,19 @@ or
             if not result.get("message"):
                 print(FALLBACK)
                 return
+
+            # Preserve only known fields
+            clean = {
+                "intervene": True,
+                "type": result["type"],
+                "message": result["message"],
+            }
+            if isinstance(result.get("skill_suggested"), str) and result["skill_suggested"]:
+                clean["skill_suggested"] = result["skill_suggested"]
+            if isinstance(result.get("skill_gap_description"), str) and result["skill_gap_description"]:
+                clean["skill_gap_description"] = result["skill_gap_description"]
+            print(json.dumps(clean))
+            return
 
         print(json.dumps(result))
 

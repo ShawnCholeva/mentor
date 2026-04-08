@@ -11,7 +11,7 @@
       "name": "mentor",
       "source": "./",
       "description": "AI-powered inline coaching system. Uses Claude haiku to evaluate prompt quality against a configurable philosophy and persistent user model. Fires typed interventions (nudge, correction, challenge, reinforcement) and evolves its understanding of the user over time.",
-      "version": "3.4.2",
+      "version": "3.4.3",
       "license": "MIT",
       "keywords": [
         "coaching",

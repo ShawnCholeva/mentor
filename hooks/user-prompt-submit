@@ -311,8 +311,8 @@ SKILL_ARGS=()
     --arg     type    "$INTERVENTION_TYPE" \
     --arg     message "$FEEDBACK" \
     --argjson skill_catalog "$SKILL_CATALOG" \
-    "${FRICTION_ARGS[@]}" \
-    "${SKILL_ARGS[@]}" \
+    "${FRICTION_ARGS[@]+"${FRICTION_ARGS[@]}"}" \
+    "${SKILL_ARGS[@]+"${SKILL_ARGS[@]}"}" \
     '{last_intervention_ts: $ts, coaching_triggered: $coaching_triggered, type: $type, message: $message, skill_catalog: $skill_catalog}
      + (if $ARGS.named | has("friction") then {friction: $friction} else {} end)
      + (if $ARGS.named | has("skill_suggested") then {skill_suggested: $skill_suggested} else {} end)

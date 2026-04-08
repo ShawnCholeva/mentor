@@ -18,6 +18,22 @@ FACETS_DIR="${HOME}/.claude/usage-data/facets"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/bootstrap-jq.sh" 2>/dev/null || exit 0
 
+# ─── Resolve claude CLI (hooks don't inherit full login shell PATH) ───────────
+if ! command -v claude &>/dev/null; then
+    for _try in \
+        "$HOME/.local/bin/claude" \
+        "$HOME/.claude/local/claude" \
+        "/usr/local/bin/claude" \
+        "/opt/homebrew/bin/claude"
+    do
+        if [[ -x "$_try" ]]; then
+            export PATH="$(dirname "$_try"):${PATH}"
+            break
+        fi
+    done
+fi
+command -v claude &>/dev/null || exit 0
+
 # ─── Check facets exist ─────────────────────────────────────────────────────
 [[ ! -d "$FACETS_DIR" ]] && exit 0
 FACET_COUNT=$(find "$FACETS_DIR" -name '*.json' 2>/dev/null | wc -l | tr -d ' ')

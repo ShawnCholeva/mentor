@@ -73,6 +73,17 @@ fi
 
 [[ "$ENABLED" != "true" ]] && { _EXIT_REASON="disabled"; exit 0; }
 
+# ─── Guard: bootstrap minimum ────────────────────────────────────────────────
+LOG_FILE="${COACHING_DIR}/interactions.jsonl"
+if [[ -f "$LOG_FILE" ]]; then
+    INTERACTION_COUNT=$(wc -l < "$LOG_FILE" 2>/dev/null | tr -d '[:space:]' || echo "0")
+    if (( INTERACTION_COUNT < BOOTSTRAP_MIN )); then
+        DBG "bootstrap: BLOCKED count=${INTERACTION_COUNT} < min=${BOOTSTRAP_MIN}"
+        _EXIT_REASON="bootstrap-pending"
+        exit 0
+    fi
+fi
+
 # ─── Guard: skill invocations ─────────────────────────────────────────────────
 echo "$PROMPT" | grep -qE "^/[a-z]" && { _EXIT_REASON="slash-command"; exit 0; }
 
@@ -177,7 +188,7 @@ if [[ "$SKILL_CATALOG_BUILT" == "false" ]] && [[ -f "$INSTALLED_PLUGINS" ]]; the
 
     SKILL_CATALOG="$CATALOG_ENTRIES"
 fi
-DBG "skill_catalog: built=${SKILL_CATALOG_BUILT} entries=$(echo "$SKILL_CATALOG" | "$JQ" 'length' 2>/dev/null || echo '?')"
+DBG "skill_catalog: from_cache=${SKILL_CATALOG_BUILT} entries=$(echo "$SKILL_CATALOG" | "$JQ" 'length' 2>/dev/null || echo '?')"
 
 # ─── Guard: evaluate script must exist ───────────────────────────────────────
 [[ ! -f "$EVALUATE_SCRIPT" ]] && { _EXIT_REASON="no-evaluator"; exit 0; }

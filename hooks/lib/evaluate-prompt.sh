@@ -13,6 +13,23 @@ FALLBACK='{"intervene":false}'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/bootstrap-jq.sh" 2>/dev/null || { echo "$FALLBACK"; exit 0; }
 
+# ─── Resolve claude CLI (hooks don't inherit full login shell PATH) ───────────
+# Try common install locations if 'claude' isn't on the current PATH.
+if ! command -v claude &>/dev/null; then
+    for _try in \
+        "$HOME/.local/bin/claude" \
+        "$HOME/.claude/local/claude" \
+        "/usr/local/bin/claude" \
+        "/opt/homebrew/bin/claude"
+    do
+        if [[ -x "$_try" ]]; then
+            export PATH="$(dirname "$_try"):${PATH}"
+            break
+        fi
+    done
+fi
+command -v claude &>/dev/null || { echo "$FALLBACK"; exit 0; }
+
 # ─── Read and parse stdin ─────────────────────────────────────────────────────
 INPUT=$(cat)
 

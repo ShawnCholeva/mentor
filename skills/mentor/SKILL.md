@@ -130,6 +130,20 @@ Run /mentor-recap for a full behavioral analysis.
 
 If the log file doesn't exist yet: "No interactions logged yet. The coaching system activates automatically on your next prompt."
 
+**Diagnosis — if N > bootstrap_min but coaching triggered = 0%:**
+
+Run this and include the last 20 lines in your response:
+```bash
+tail -20 ~/.claude/coaching/hook-debug.log 2>/dev/null || echo "Debug log not found — hook may not be running at all."
+```
+
+Interpret the output:
+- `MENTOR-EVAL raw_response=''` on every entry → `claude` binary is not in PATH in the hook process. The evaluator silently falls back to `{"intervene":false}`. Fix: update Claude Code, or verify `claude` is accessible at its install path.
+- No debug log entries at all → the UserPromptSubmit hook itself is not running. Check that the plugin is installed as a git clone (not a manual copy) and that `${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd` is executable.
+- `EXIT-TRAP: reason=no-evaluator` → `hooks/lib/evaluate-prompt.sh` is missing from the plugin cache. Reinstall the plugin.
+- `EXIT-TRAP: reason=bootstrap-pending` → the bootstrap minimum hasn't been reached yet. This is normal.
+- `EXIT-TRAP: reason=disabled` → coaching was turned off. Run `/mentor on` to re-enable.
+
 ---
 
 ### `philosophy`

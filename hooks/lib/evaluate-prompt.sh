@@ -223,10 +223,16 @@ ${PROMPT_TRUNC}
 fi
 
 # ─── Call Claude via CLI ─────────────────────────────────────────────────────
-TEXT=$(printf '%s' "$USER_MESSAGE" | MENTOR_INTERNAL=1 timeout 25 claude -p \
-    --model "$MODEL" \
-    --system-prompt "$SYSTEM_PROMPT" \
-    --no-session-persistence 2>/dev/null) || true
+# --setting-sources "" strips plugin/user-level system prompt injection
+# cd /tmp prevents CLAUDE.md from the project dir being loaded
+# Together these give an isolated LLM call that still works with OAuth auth
+TEXT=$(printf '%s' "$USER_MESSAGE" | MENTOR_INTERNAL=1 timeout 25 \
+    bash -c 'cd /tmp && exec claude -p \
+        --model "$1" \
+        --system-prompt "$2" \
+        --no-session-persistence \
+        --setting-sources "" \
+        2>/dev/null' _ "$MODEL" "$SYSTEM_PROMPT") || true
 
 [[ -z "$TEXT" ]] && { echo "$FALLBACK"; exit 0; }
 # Log raw model response for debugging (distinguish real response from fallback)

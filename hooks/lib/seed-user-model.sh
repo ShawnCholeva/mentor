@@ -99,10 +99,13 @@ ${FACET_SUMMARY}
 
 Produce the user model JSON."
 
-TEXT=$(printf '%s' "$USER_MESSAGE" | MENTOR_INTERNAL=1 timeout 10 claude -p \
-    --model "claude-haiku-4-5-20251001" \
-    --system-prompt "$SYSTEM_PROMPT" \
-    --no-session-persistence 2>/dev/null) || true
+TEXT=$(printf '%s' "$USER_MESSAGE" | MENTOR_INTERNAL=1 timeout 10 \
+    bash -c 'cd /tmp && exec claude -p \
+        --model "claude-haiku-4-5-20251001" \
+        --system-prompt "$1" \
+        --no-session-persistence \
+        --setting-sources "" \
+        2>/dev/null' _ "$SYSTEM_PROMPT") || true
 
 [[ -z "$TEXT" ]] && exit 0
 

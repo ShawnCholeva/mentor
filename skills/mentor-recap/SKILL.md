@@ -35,8 +35,10 @@ Parse the JSONL: each line is one interaction entry with fields:
 - `turn_count` — number of turns to complete the task
 - `coaching_triggered` — whether Mentor intervened
 - `intervention_type` — type of intervention: `nudge`, `correction`, `challenge`, `reinforcement`, or null
-- `tags` — matched trigger types
-- `timestamp` — ISO8601
+- `friction_type` — friction category when coaching fired: `vague_request`, `wrong_approach`, `missing_diagnostics`, `scope_drift`, `missing_skill`, or null
+- `skill_available` — whether a relevant skill was available but not invoked
+- `session_outcome` — estimated outcome: `achieved`, `not_achieved`, or `unknown`
+- `timestamp` — Unix epoch (seconds)
 
 Use the last 100 entries (or all if fewer).
 
@@ -59,7 +61,9 @@ Calculate:
 | High-iteration rate | % of entries where `turn_count` >= 4 |
 | Mentor trigger rate | % where `coaching_triggered` = true |
 | Intervention breakdown | Count by `intervention_type` (nudge/correction/challenge/reinforcement) |
-| Top tags | Most frequent values in `tags` arrays |
+| Friction distribution | Count by `friction_type` field (non-null entries only) |
+| Session outcomes | Count by `session_outcome` field |
+| Skill availability | Count entries where `skill_available` = true but `skill_used` is null |
 
 ---
 
@@ -67,7 +71,7 @@ Calculate:
 
 Look for:
 
-1. **Vagueness pattern** — high frequency of `vague` intent or tag → prompt structure habit
+1. **Vagueness pattern** — high frequency of `vague` intent → prompt structure habit
 2. **High iteration pattern** — avg turn_count > 3 → prompts not landing on first try
 3. **Improving trend** — if sortable by timestamp: is avg turn_count decreasing over time?
 4. **Mentor frequency** — if coaching triggered on >40% of prompts, threshold may be too sensitive
@@ -104,6 +108,15 @@ Pattern: [name]
 
 [If no patterns: "No strong patterns detected — usage looks balanced."]
 
+### Friction Patterns
+[Group interventions by friction_type. For each type that appeared 2+ times:]
+- **[friction_type]**: [N] occurrences
+  Impact: [what this costs — extra turns, rework, wrong output]
+  Trend: [increasing/decreasing/stable over the window]
+
+[If session_outcome data available:]
+Session outcomes: [X] achieved · [Y] not_achieved · [Z] unknown
+
 ### Skill Usage
 [Ranked list of skills used and how often, or "No skill invocations recorded" if none]
 [Direct prompts: N]
@@ -116,7 +129,7 @@ High-iteration tasks (4+ turns): [X%]
 ### Mentor Activity
 Triggered: [X% of prompts]
 Breakdown: nudge [N] · correction [N] · challenge [N] · reinforcement [N]
-Top trigger: [most common tag or intervention type]
+Top trigger: [most common intervention_type or friction_type]
 
 [If reinforcement count is 0 and total interventions > 5: "No reinforcement fired yet — the mentor may be missing opportunities to acknowledge improvement."]
 
@@ -134,6 +147,6 @@ Keep the report concise. Focus on actionable patterns, not exhaustive statistics
 
 End with one of:
 - If Mentor trigger rate is high: "Run `/mentor chill` to reduce intervention frequency."
-- If turn count is high and vagueness is the top tag: "Your prompts may benefit from more upfront structure — goal, constraints, output format."
+- If turn count is high and vagueness is the top friction type: "Your prompts may benefit from more upfront structure — goal, constraints, output format."
 - If user model weaknesses are stale (last intervention_history entry is old): "The user model may be stale. Keep using Claude normally and it will update every 5 interactions."
 - If no strong patterns: "Things look solid. Keep an eye on turn count as a leading indicator."

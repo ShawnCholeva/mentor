@@ -2,7 +2,7 @@
 # evaluate-prompt.sh — Prompt evaluator using claude -p
 #
 # Input:  JSON via stdin {prompt, mode, philosophy, user_model, history}
-# Output: JSON judgment  {intervene: bool, [type, message]}
+# Output: JSON judgment  {intervene: bool, [type, message, friction?, skill_available?]}
 # Always exits 0. On any error outputs {"intervene":false}.
 
 set -uo pipefail
@@ -44,14 +44,40 @@ if [[ "$HAS_MODEL" == "true" ]]; then
     WEAKNESSES=$(echo "$USER_MODEL" | "$JQ" -r '.weaknesses | join(", ")' 2>/dev/null || echo "")
     FOCUS=$(     echo "$USER_MODEL" | "$JQ" -r '.current_focus   // ""'   2>/dev/null || echo "")
     PROGRESS=$(  echo "$USER_MODEL" | "$JQ" -r '.recent_progress // ""'   2>/dev/null || echo "")
+    INTERVENTION_HIST=$(echo "$USER_MODEL" | "$JQ" -r '
+        (.intervention_history // [])[-10:] |
+        if length > 0 then
+            map("- " + .) | join("\n")
+        else
+            "No coaching history yet."
+        end' 2>/dev/null || echo "No coaching history yet.")
     MODEL_SECTION="## User Profile
 Strengths: ${STRENGTHS}
 Weaknesses: ${WEAKNESSES}
 Current focus: ${FOCUS}
-Recent progress: ${PROGRESS}"
+Recent progress: ${PROGRESS}
+
+Intervention history (recent coaching):
+${INTERVENTION_HIST}"
 else
     MODEL_SECTION="## User Profile
 No profile yet — this is a new user. Be conservative with interventions."
+fi
+
+# ─── Build priority weights section (from insights sync) ────────────────────
+PRIORITY_SECTION=""
+PRIORITY_WEIGHTS_FILE="${HOME}/.claude/coaching/priority-weights.json"
+if [[ -f "$PRIORITY_WEIGHTS_FILE" ]]; then
+    PRIORITY_LIST=$(cat "$PRIORITY_WEIGHTS_FILE" 2>/dev/null | "$JQ" -r '
+        .top_friction // [] |
+        map("- " + .pattern + " (" + .weight + " priority — " + (.count | tostring) + " occurrences across sessions)") |
+        join("\n")' 2>/dev/null || echo "")
+    if [[ -n "$PRIORITY_LIST" ]]; then
+        PRIORITY_SECTION="## Priority Patterns (from usage analysis)
+Your attention should be weighted toward these friction patterns:
+${PRIORITY_LIST}
+Be more sensitive to these patterns. Lower-priority issues can still trigger interventions but require higher confidence."
+    fi
 fi
 
 PHILO_TEXT="${PHILOSOPHY:-Clarity upfront is better than iteration later. Think in systems, not tasks.}"
@@ -65,7 +91,9 @@ SYSTEM_PROMPT="You are a prompt coach for a Claude Code user. You evaluate their
 ${PHILO_TEXT}
 
 ${MODEL_SECTION}
-## Intervention Types
+${PRIORITY_SECTION:+${PRIORITY_SECTION}
+
+}## Intervention Types
 - nudge: Light suggestion. The prompt is okay but could be better. Tone: friendly pointer.
 - correction: Clear gap worth addressing. The prompt has a flaw that will lead to a worse outcome. Tone: constructive, specific.
 - challenge: Strong pushback. The user's approach or thinking has a real problem. Tone: direct but respectful — explain WHY the thinking is flawed, not just what to fix.
@@ -91,18 +119,44 @@ Keep messages under 100 words. Write like a person, not a linter. Vary your phra
 8. Prefer one precise observation over multiple generic suggestions.
 9. If you notice a pattern across the recent prompt history (repeated vagueness, improving specificity, etc.), weave that observation in naturally. Do not start with \"Pattern:\" or label it mechanically.
 
+## Friction Categories
+When you intervene, classify the friction type and tailor your message accordingly. Include a \"friction\" field in your JSON response.
+
+- vague_request: The prompt lacks specifics — no file paths, no expected behavior, no error output. Coach toward: what file, expected vs actual behavior, and any error output.
+- wrong_approach: The user is heading down a path that won't work or is inefficient. Coach toward: stepping back, checking docs, or rethinking the strategy.
+- missing_diagnostics: The user is debugging without sharing error messages, logs, or relevant file paths. Coach toward: sharing the error output and relevant context before Claude starts exploring.
+- scope_drift: The task has grown beyond what was originally asked or the user is trying to do too much at once. Coach toward: scoping down, breaking into smaller pieces, or resetting.
+- missing_skill: The prompt describes work that matches a known skill pattern (debugging, testing, design, code review) but no skill was invoked. Coach toward: the specific skill category that would help.
+
+If the issue doesn't fit any category, omit the friction field entirely. Do not force a classification.
+
+## Reinforcement Triggers
+Fire reinforcement when you see genuine growth:
+- The user previously struggled with something (see intervention history) and this prompt shows improvement in that area. Name the specific improvement — e.g., \"You included the error output and file path this time — that's exactly what was missing in your last few prompts.\"
+- The prompt exemplifies a philosophy principle well. Name which principle and why it matters.
+- The user invoked a relevant skill before starting work, especially if this is a new behavior.
+
+Reinforcement messages must reference the specific improvement. Generic praise (\"Good prompt!\", \"Nice work!\") is worse than no reinforcement — it teaches the user nothing. Be specific about WHAT improved and WHY it matters.
+
+## Skill Availability
+If the user's prompt describes debugging, testing, building, designing, or reviewing work AND they did not invoke a skill (no / prefix), set \"skill_available\": true in your response. Otherwise omit it.
+
 ## Conversation Awareness
 This is turn ${TURN_COUNT} of the conversation (${TURN_COUNT} previous prompts in session history).
 
+IMPORTANT: You cannot see Claude's responses — only the user's prompts. This means you CANNOT judge whether a prompt adequately answers a question Claude asked. Assume short mid-conversation prompts are valid responses to something Claude said.
+
 If turn count > 1, the user is mid-conversation. Claude already has the full conversation context.
 - References to prior discussion (\"option 1\", \"the first one\", \"tell me more\", \"that approach\", \"both\", \"yes do X\", \"I'd like to see\") are normal follow-ups. Do NOT flag these as lacking context.
-- Short prompts (under 6 words) at turn > 1 are conversational, not vague. Only intervene if the prompt is truly ambiguous even WITH full conversation context.
-- Only intervene on mid-conversation prompts for substantive issues: scope creep, missing diagnostics for debugging, fundamentally flawed approach. Missing context is never a valid reason to intervene after turn 1.
+- Short prompts (under 10 words) at turn > 1 are almost always conversational — answering Claude's question, picking an option, confirming a direction. Do NOT intervene on these unless they indicate clear scope creep or a dangerous approach.
+- \"Missing context\" or \"vague\" is NEVER a valid reason to intervene after turn 1. Claude has the full conversation — you don't. Trust that context exists even if you can't see it.
+- Only intervene on mid-conversation prompts for substantive issues: scope creep, missing diagnostics for an active debugging task, or a fundamentally flawed technical approach. When in doubt, do not intervene.
 
 Respond with ONLY a JSON object, no markdown, no explanation:
 {\"intervene\": false}
 or
-{\"intervene\": true, \"type\": \"nudge|correction|challenge|reinforcement\", \"message\": \"your coaching message here\"}"
+{\"intervene\": true, \"type\": \"nudge|correction|challenge|reinforcement\", \"message\": \"your coaching message here\", \"friction\": \"vague_request|wrong_approach|missing_diagnostics|scope_drift|missing_skill\", \"skill_available\": true}
+The \"friction\" and \"skill_available\" fields are optional — include them only when applicable."
 
 # ─── Build user message with optional history ────────────────────────────────
 if [[ -n "$HISTORY" ]]; then
@@ -150,6 +204,8 @@ JUDGMENT=$(printf '%s' "$TEXT" | "$JQ" -e '
           and (.type | IN("nudge","correction","challenge","reinforcement"))
           and (.message | type == "string" and length > 0))
     then {intervene: true, type: .type, message: .message}
+         + (if .friction and (.friction | IN("vague_request","wrong_approach","missing_diagnostics","scope_drift","missing_skill")) then {friction: .friction} else {} end)
+         + (if .skill_available then {skill_available: true} else {} end)
     else error("invalid")
     end' 2>/dev/null) || { echo "$FALLBACK"; exit 0; }
 

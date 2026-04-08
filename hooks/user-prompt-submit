@@ -116,6 +116,31 @@ if [[ -f "$HISTORY_FILE" ]] && [[ -n "$SESSION_ID" ]]; then
     fi
 fi
 
+# ─── Guard: short mid-conversation follow-ups ───────────────────────────────
+# When the user is mid-conversation (prior prompts exist), short prompts
+# are almost always answers to questions Claude asked. The evaluator can't
+# see Claude's responses, so it can't verify — skip evaluation entirely.
+TURN_COUNT=$(echo "$HISTORY_JSON" | "$JQ" 'length' 2>/dev/null || echo "0")
+if [[ "$TURN_COUNT" -gt 0 ]]; then
+    WORD_COUNT=$(echo "$PROMPT" | wc -w | tr -d ' ')
+    if [[ "$WORD_COUNT" -le 4 ]]; then
+        DBG "short-followup: skipping (${WORD_COUNT} words, turn $((TURN_COUNT + 1)))"
+        _EXIT_REASON="short-followup"
+        exit 0
+    fi
+    # Option-selection patterns: "approach A", "option 2", "the first one", etc.
+    if echo "$PROMPT_TRIMMED" | grep -qiE "^(option|approach|choice|plan|alternative) [a-z0-9]$"; then
+        DBG "option-selection: skipping mid-conversation option pick"
+        _EXIT_REASON="option-selection"
+        exit 0
+    fi
+    if echo "$PROMPT_TRIMMED" | grep -qiE "^the (first|second|third|last|other) (one|option|approach)$"; then
+        DBG "option-selection: skipping mid-conversation selection"
+        _EXIT_REASON="option-selection"
+        exit 0
+    fi
+fi
+
 # ─── Bootstrap: seed defaults if missing ─────────────────────────────────────
 if [[ ! -f "$PHILOSOPHY_FILE" ]] && [[ -n "$DEFAULTS_DIR" ]] && [[ -f "${DEFAULTS_DIR}/philosophy.md" ]]; then
     cp "${DEFAULTS_DIR}/philosophy.md" "$PHILOSOPHY_FILE" 2>/dev/null || true
@@ -124,6 +149,24 @@ fi
 if [[ ! -f "$USER_MODEL_FILE" ]]; then
     printf '{"strengths":[],"weaknesses":[],"current_focus":"","recent_progress":"","intervention_history":[]}\n' \
         > "$USER_MODEL_FILE" 2>/dev/null || true
+fi
+
+# ─── Seed user model from insights if empty and facets available ────────────
+SEED_SCRIPT="${SCRIPT_DIR}/lib/seed-user-model.sh"
+if [[ -f "$SEED_SCRIPT" ]] && [[ -f "$USER_MODEL_FILE" ]]; then
+    MODEL_EMPTY=$("$JQ" -r '
+        if ((.strengths // []) | length == 0)
+           and ((.weaknesses // []) | length == 0)
+           and ((.current_focus // "") | length == 0)
+        then "true" else "false" end' "$USER_MODEL_FILE" 2>/dev/null || echo "false")
+    FACETS_DIR="${HOME}/.claude/usage-data/facets"
+    if [[ "$MODEL_EMPTY" == "true" ]] && [[ -d "$FACETS_DIR" ]]; then
+        FACET_COUNT=$(find "$FACETS_DIR" -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
+        if [[ "$FACET_COUNT" -gt 0 ]]; then
+            DBG "seeding: model empty, ${FACET_COUNT} facets available — running seeder"
+            timeout 10 bash "$SEED_SCRIPT" 2>/dev/null || true
+        fi
+    fi
 fi
 
 # ─── Load philosophy and user model ──────────────────────────────────────────
@@ -155,16 +198,24 @@ INTERVENTION_TYPE=$(echo "$JUDGMENT" | "$JQ" -r '.type    // "nudge"' 2>/dev/nul
 FEEDBACK=$(         echo "$JUDGMENT" | "$JQ" -r '.message // ""'      2>/dev/null || echo "")
 [[ -z "$FEEDBACK" ]] && { _EXIT_REASON="empty-feedback"; exit 0; }
 
+FRICTION=$(         echo "$JUDGMENT" | "$JQ" -r '.friction         // ""'    2>/dev/null || echo "")
+SKILL_AVAILABLE=$(  echo "$JUDGMENT" | "$JQ" -r '.skill_available  // false' 2>/dev/null || echo "false")
+
 # ─── Write session state (only reached when coaching fires; coaching_triggered is always true here) ─
 NOW_EPOCH=$(date +%s)
+FRICTION_ARGS=()
+[[ -n "$FRICTION" ]] && FRICTION_ARGS=(--arg friction "$FRICTION")
 "$JQ" -n \
     --argjson ts "$NOW_EPOCH" \
     --argjson coaching_triggered true \
     --arg     type    "$INTERVENTION_TYPE" \
     --arg     message "$FEEDBACK" \
-    '{last_intervention_ts: $ts, coaching_triggered: $coaching_triggered, type: $type, message: $message}' \
+    --argjson skill_available "$SKILL_AVAILABLE" \
+    "${FRICTION_ARGS[@]}" \
+    '{last_intervention_ts: $ts, coaching_triggered: $coaching_triggered, type: $type, message: $message, skill_available: $skill_available}
+     + (if $ARGS.named | has("friction") then {friction: $friction} else {} end)' \
     > "$STATE_FILE" 2>/dev/null || true
-DBG "state_write: path=$STATE_FILE coaching=true type=$INTERVENTION_TYPE exists=$([ -f "$STATE_FILE" ] && echo yes || echo no)"
+DBG "state_write: path=$STATE_FILE coaching=true type=$INTERVENTION_TYPE friction=${FRICTION:-none} exists=$([ -f "$STATE_FILE" ] && echo yes || echo no)"
 
 # ─── Format coaching message ──────────────────────────────────────────────────
 case "$INTERVENTION_TYPE" in

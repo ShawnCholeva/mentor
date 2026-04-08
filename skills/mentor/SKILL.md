@@ -114,6 +114,17 @@ Intervention history: [N entries]
   — Coaching triggered: [X] times ([Y]%)
   — Last logged: [timestamp]
 
+### Priority Patterns
+[If ~/.claude/coaching/priority-weights.json exists:]
+Source: /insights usage analysis
+Last synced: [timestamp from last_sync]
+Patterns:
+  — [pattern] ([weight] priority, [count] occurrences)
+  — [pattern] ([weight] priority, [count] occurrences)
+
+[If file doesn't exist:]
+Priority patterns: Not configured (run /insights to generate usage data, then patterns sync automatically)
+
 Run /mentor-recap for a full behavioral analysis.
 ```
 
@@ -159,6 +170,9 @@ Display it in a readable format:
 
 **Intervention history** ([N] entries)
 [list last 5 entries, or "None yet"]
+
+[If user model has seeded_from field:]
+**Seeded from:** [value] (initial profile was bootstrapped from /insights data)
 ```
 
 Then explain: "This model is updated automatically every 5 interactions by the stop hook. It informs the mentor's coaching — areas you're strong in won't be coached, and your current focus gets extra weight."

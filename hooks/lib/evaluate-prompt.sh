@@ -226,7 +226,7 @@ fi
 # --setting-sources "" strips plugin/user-level system prompt injection
 # cd /tmp prevents CLAUDE.md from the project dir being loaded
 # Together these give an isolated LLM call that still works with OAuth auth
-TEXT=$(printf '%s' "$USER_MESSAGE" | MENTOR_INTERNAL=1 timeout 25 \
+TEXT=$(printf '%s' "$USER_MESSAGE" | MENTOR_INTERNAL=1 _timeout 25 \
     bash -c 'cd /tmp && exec claude -p \
         --model "$1" \
         --system-prompt "$2" \

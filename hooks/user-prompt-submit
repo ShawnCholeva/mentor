@@ -258,7 +258,7 @@ if [[ -f "$SEED_SCRIPT" ]] && [[ -f "$USER_MODEL_FILE" ]]; then
         FACET_COUNT=$(find "$FACETS_DIR" -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
         if [[ "$FACET_COUNT" -gt 0 ]]; then
             DBG "seeding: model empty, ${FACET_COUNT} facets available — running seeder"
-            timeout 10 bash "$SEED_SCRIPT" 2>/dev/null || true
+            _timeout 10 bash "$SEED_SCRIPT" 2>/dev/null || true
         fi
     fi
 fi
@@ -281,7 +281,7 @@ PAYLOAD=$("$JQ" -n \
     '{prompt: $prompt, mode: $mode, philosophy: $philosophy, user_model: $user_model, history: $history, skill_catalog: $skill_catalog}' \
     2>/dev/null) || exit 0
 
-JUDGMENT=$(printf '%s' "$PAYLOAD" | timeout 28 bash "$EVALUATE_SCRIPT" 2>/dev/null \
+JUDGMENT=$(printf '%s' "$PAYLOAD" | _timeout 28 bash "$EVALUATE_SCRIPT" 2>/dev/null \
     || echo '{"intervene":false}')
 DBG "judgment: $(printf '%s' "$JUDGMENT" | tr -d '\n')"
 

@@ -61,3 +61,18 @@ fi
 
 rm -f "$_WARNED_FLAG"
 export JQ
+
+# ─── Portable timeout ─────────────────────────────────────────────────────────
+# macOS ships BSD utils — no GNU 'timeout'. Prefer gtimeout (brew coreutils),
+# fall back to timeout (Linux), or run without a timeout if neither exists.
+_TIMEOUT_CMD=$(command -v gtimeout 2>/dev/null || command -v timeout 2>/dev/null || echo "")
+_timeout() {
+    if [[ -n "$_TIMEOUT_CMD" ]]; then
+        "$_TIMEOUT_CMD" "$@"
+    else
+        shift  # drop the seconds arg and run directly
+        "$@"
+    fi
+}
+export _TIMEOUT_CMD
+export -f _timeout

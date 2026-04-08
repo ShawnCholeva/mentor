@@ -99,7 +99,7 @@ ${FACET_SUMMARY}
 
 Produce the user model JSON."
 
-TEXT=$(printf '%s' "$USER_MESSAGE" | MENTOR_INTERNAL=1 timeout 10 \
+TEXT=$(printf '%s' "$USER_MESSAGE" | MENTOR_INTERNAL=1 _timeout 10 \
     bash -c 'cd /tmp && exec claude -p \
         --model "claude-haiku-4-5-20251001" \
         --system-prompt "$1" \

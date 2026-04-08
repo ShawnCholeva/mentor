@@ -162,6 +162,7 @@ if [[ "$SKILL_CATALOG_BUILT" == "false" ]] && [[ -f "$INSTALLED_PLUGINS" ]]; the
             [[ -z "$skill_name" ]] && skill_name="$skill_dir"
 
             # Skip skills with no trigger description
+            skill_desc=$(echo "$skill_desc" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
             [[ -z "$skill_desc" ]] && continue
 
             # Truncate description to 200 chars

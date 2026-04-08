@@ -40,7 +40,8 @@ COACHING_TRIGGERED="false"
 INTERVENTION_TYPE="null"
 COACHING_MESSAGE=""
 FRICTION=""
-SKILL_AVAILABLE="false"
+SKILL_SUGGESTED=""
+SKILL_GAP_DESC=""
 
 if [[ -f "$STATE_FILE" ]]; then
     STATE=$(cat "$STATE_FILE")
@@ -48,7 +49,8 @@ if [[ -f "$STATE_FILE" ]]; then
     INTERVENTION_TYPE=$(echo "$STATE" | "$JQ" -r 'if .type then ("\"" + .type + "\"") else "null" end'  2>/dev/null || echo "null")
     COACHING_MESSAGE=$( echo "$STATE" | "$JQ" -r '.message // ""'                                       2>/dev/null || echo "")
     FRICTION=$(         echo "$STATE" | "$JQ" -r '.friction // ""'                                      2>/dev/null || echo "")
-    SKILL_AVAILABLE=$(  echo "$STATE" | "$JQ" -r 'if .skill_available then "true" else "false" end'      2>/dev/null || echo "false")
+    SKILL_SUGGESTED=$(  echo "$STATE" | "$JQ" -r '.skill_suggested // ""'                               2>/dev/null || echo "")
+    SKILL_GAP_DESC=$(   echo "$STATE" | "$JQ" -r '.skill_gap_description // ""'                         2>/dev/null || echo "")
 fi
 
 # ─── Count user turns from transcript ────────────────────────────────────────
@@ -111,6 +113,12 @@ PROMPT_SUMMARY="${LAST_PROMPT:0:200}"
 FRICTION_TYPE="null"
 [[ -n "$FRICTION" ]] && FRICTION_TYPE="\"${FRICTION}\""
 
+SKILL_SUGGESTED_JSON="null"
+[[ -n "$SKILL_SUGGESTED" ]] && SKILL_SUGGESTED_JSON="\"${SKILL_SUGGESTED}\""
+
+SKILL_GAP_JSON="null"
+[[ -n "$SKILL_GAP_DESC" ]] && SKILL_GAP_JSON="\"${SKILL_GAP_DESC}\""
+
 "$JQ" -n -c \
     --arg     id                "$ENTRY_ID" \
     --arg     session_id        "$SESSION_ID" \
@@ -122,21 +130,23 @@ FRICTION_TYPE="null"
     --argjson coaching_triggered "$COACHING_TRIGGERED" \
     --argjson intervention_type "$INTERVENTION_TYPE" \
     --argjson friction_type     "$FRICTION_TYPE" \
-    --argjson skill_available   "$SKILL_AVAILABLE" \
+    --argjson skill_suggested   "$SKILL_SUGGESTED_JSON" \
+    --argjson skill_gap_description "$SKILL_GAP_JSON" \
     --arg     session_outcome   "$SESSION_OUTCOME" \
     '{
-        id:                 $id,
-        session_id:         $session_id,
-        timestamp:          $timestamp,
-        intent:             $intent,
-        skill_used:         $skill_used,
-        turn_count:         $turn_count,
-        prompt_summary:     $prompt_summary,
-        coaching_triggered: $coaching_triggered,
-        intervention_type:  $intervention_type,
-        friction_type:      $friction_type,
-        skill_available:    $skill_available,
-        session_outcome:    $session_outcome
+        id:                    $id,
+        session_id:            $session_id,
+        timestamp:             $timestamp,
+        intent:                $intent,
+        skill_used:            $skill_used,
+        turn_count:            $turn_count,
+        prompt_summary:        $prompt_summary,
+        coaching_triggered:    $coaching_triggered,
+        intervention_type:     $intervention_type,
+        friction_type:         $friction_type,
+        skill_suggested:       $skill_suggested,
+        skill_gap_description: $skill_gap_description,
+        session_outcome:       $session_outcome
     }' >> "$LOG_FILE" 2>/dev/null || true
 
 # ─── Trigger insights sync if facets are newer than weights ─────────────────

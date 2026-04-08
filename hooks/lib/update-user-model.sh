@@ -77,7 +77,14 @@ UPDATED=$(printf '%s' "$TEXT" | "$JQ" -e '
         current_focus:        (.current_focus        // ""),
         recent_progress:      (.recent_progress      // ""),
         intervention_history: ((.intervention_history // [])[-20:])
-      }' 2>/dev/null) || exit 0
+      }
+    + (if .seeded_from then {seeded_from: .seeded_from} else {} end)' 2>/dev/null) || exit 0
+
+# Preserve seeded_from from input model even if LLM omitted it
+INPUT_SEEDED=$(echo "$USER_MODEL" | "$JQ" -r '.seeded_from // ""' 2>/dev/null || echo "")
+if [[ -n "$INPUT_SEEDED" ]]; then
+    UPDATED=$(echo "$UPDATED" | "$JQ" --arg sf "$INPUT_SEEDED" '. + {seeded_from: $sf}' 2>/dev/null || echo "$UPDATED")
+fi
 
 # ─── Atomic write ────────────────────────────────────────────────────────────
 mkdir -p "$COACHING_DIR"

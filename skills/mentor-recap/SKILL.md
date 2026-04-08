@@ -38,7 +38,7 @@ Parse the JSONL: each line is one interaction entry with fields:
 - `friction_type` — friction category when coaching fired: `vague_request`, `wrong_approach`, `missing_diagnostics`, `scope_drift`, `missing_skill`, or null
 - `skill_available` — whether a relevant skill was available but not invoked
 - `session_outcome` — estimated outcome: `achieved`, `not_achieved`, or `unknown`
-- `timestamp` — ISO8601
+- `timestamp` — Unix epoch (seconds)
 
 Use the last 100 entries (or all if fewer).
 

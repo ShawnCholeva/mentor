@@ -59,15 +59,22 @@ def build_weights(friction_counts: dict[str, int]) -> list[dict]:
     if not friction_counts:
         return []
 
+    # Map categories first, then aggregate to avoid duplicates
+    # (e.g., wrong_approach + buggy_code both map to wrong_approach)
+    mapped: dict[str, int] = {}
+    for category, count in friction_counts.items():
+        pattern = map_friction(category)
+        mapped[pattern] = mapped.get(pattern, 0) + count
+
     # Sort by count descending, take top 3
-    sorted_frictions = sorted(friction_counts.items(), key=lambda x: -x[1])[:3]
+    sorted_frictions = sorted(mapped.items(), key=lambda x: -x[1])[:3]
 
     max_count = sorted_frictions[0][1] if sorted_frictions else 0
     weights = []
-    for category, count in sorted_frictions:
+    for pattern, count in sorted_frictions:
         weight = "high" if count >= max_count * 0.5 else "medium"
         weights.append({
-            "pattern": map_friction(category),
+            "pattern": pattern,
             "weight": weight,
             "count": count,
         })

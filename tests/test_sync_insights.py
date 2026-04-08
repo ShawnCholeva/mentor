@@ -81,14 +81,25 @@ def test_build_weights(facets_dir):
     counts = aggregate_facets(facets_dir)
     weights = build_weights(counts)
     assert len(weights) <= 3
-    # Top pattern should be wrong_approach or misunderstood_request (both have count 2)
+    # After mapping: wrong_approach=3 (2+1 from buggy_code), vague_request=2, scope_drift=1
     patterns = [w["pattern"] for w in weights]
     assert "wrong_approach" in patterns
     assert "vague_request" in patterns
+    # No duplicate patterns after mapping
+    assert len(patterns) == len(set(patterns))
     # Weight should be "high" for top items
     for w in weights:
         assert w["weight"] in ("high", "medium")
         assert isinstance(w["count"], int)
+
+
+def test_build_weights_aggregates_mapped_categories():
+    """buggy_code and wrong_approach both map to wrong_approach — counts should merge."""
+    counts = {"wrong_approach": 5, "buggy_code": 3}
+    weights = build_weights(counts)
+    assert len(weights) == 1
+    assert weights[0]["pattern"] == "wrong_approach"
+    assert weights[0]["count"] == 8
 
 
 def test_build_weights_empty():

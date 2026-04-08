@@ -60,7 +60,7 @@ fi
 
 # ─── Estimate session outcome from transcript ──────────────────────────────
 SESSION_OUTCOME="unknown"
-if [[ -n "$TRANSCRIPT_PATH" ]] && [[ -f "$TRANSCRIPT_PATH" ]]; then
+if [[ "$TURN_COUNT" -ge 3 ]] && [[ -n "$TRANSCRIPT_PATH" ]] && [[ -f "$TRANSCRIPT_PATH" ]]; then
     if grep -q '"git commit"\|"git add"' "$TRANSCRIPT_PATH" 2>/dev/null; then
         SESSION_OUTCOME="achieved"
     elif tail -c 5000 "$TRANSCRIPT_PATH" 2>/dev/null | grep -qiE '"error"|"fail"|traceback' 2>/dev/null; then

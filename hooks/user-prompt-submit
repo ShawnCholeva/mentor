@@ -96,6 +96,86 @@ if [[ -n "$SESSION_ID" ]] && [[ -f "$STATE_FILE" ]]; then
     DBG "cooldown: passed elapsed=${ELAPSED}s"
 fi
 
+# ─── Build skill catalog (once per session) ──────────────────────────────────
+SKILL_CATALOG="[]"
+SKILL_CATALOG_BUILT=false
+INSTALLED_PLUGINS="${HOME}/.claude/plugins/installed_plugins.json"
+
+if [[ -n "$SESSION_ID" ]] && [[ -f "$STATE_FILE" ]]; then
+    # Reuse cached catalog from session state
+    SKILL_CATALOG=$("$JQ" -c '.skill_catalog // []' "$STATE_FILE" 2>/dev/null || echo "[]")
+    SKILL_CATALOG_BUILT=true
+fi
+
+if [[ "$SKILL_CATALOG_BUILT" == "false" ]] && [[ -f "$INSTALLED_PLUGINS" ]]; then
+    # Build catalog by scanning each plugin's install path for SKILL.md files
+    CATALOG_ENTRIES="[]"
+    while IFS= read -r install_path; do
+        [[ -z "$install_path" ]] && continue
+        for skill_md in "$install_path"/skills/*/SKILL.md; do
+            [[ -f "$skill_md" ]] || continue
+            skill_dir=$(basename "$(dirname "$skill_md")")
+
+            # Skip meta-skills and self-referential skills
+            case "$skill_dir" in
+                using-*|mentor|mentor-recap) continue ;;
+            esac
+
+            # Extract name and description from YAML frontmatter
+            skill_name=""
+            skill_desc=""
+            in_frontmatter=false
+            in_desc=false
+            while IFS= read -r line; do
+                if [[ "$line" == "---" ]]; then
+                    if [[ "$in_frontmatter" == "true" ]]; then
+                        break
+                    fi
+                    in_frontmatter=true
+                    continue
+                fi
+                if [[ "$in_frontmatter" == "true" ]]; then
+                    if [[ "$line" =~ ^name:\ *(.*) ]]; then
+                        skill_name="${BASH_REMATCH[1]}"
+                        in_desc=false
+                    elif [[ "$line" =~ ^description:\ *\>-?$ ]]; then
+                        in_desc=true
+                        skill_desc=""
+                    elif [[ "$line" =~ ^description:\ *\"(.*)\"$ ]]; then
+                        skill_desc="${BASH_REMATCH[1]}"
+                        in_desc=false
+                    elif [[ "$line" =~ ^description:\ *(.*) ]]; then
+                        skill_desc="${BASH_REMATCH[1]}"
+                        in_desc=true
+                    elif [[ "$in_desc" == "true" ]]; then
+                        if [[ "$line" =~ ^[a-z_]+: ]] || [[ -z "$line" ]]; then
+                            in_desc=false
+                        else
+                            skill_desc="${skill_desc} $(echo "$line" | sed 's/^[[:space:]]*//')"
+                        fi
+                    fi
+                fi
+            done < "$skill_md"
+
+            # Use directory name as fallback for skill name
+            [[ -z "$skill_name" ]] && skill_name="$skill_dir"
+
+            # Skip skills with no trigger description
+            [[ -z "$skill_desc" ]] && continue
+
+            # Truncate description to 200 chars
+            skill_desc="${skill_desc:0:200}"
+
+            CATALOG_ENTRIES=$(echo "$CATALOG_ENTRIES" | "$JQ" -c \
+                --arg name "$skill_name" \
+                --arg trigger "$skill_desc" \
+                '. + [{"name": $name, "trigger": $trigger}]' 2>/dev/null || echo "$CATALOG_ENTRIES")
+        done
+    done < <("$JQ" -r '.plugins | to_entries[] | .value[0].installPath // empty' "$INSTALLED_PLUGINS" 2>/dev/null)
+
+    SKILL_CATALOG="$CATALOG_ENTRIES"
+fi
+
 # ─── Guard: evaluate script must exist ───────────────────────────────────────
 [[ ! -f "$EVALUATE_SCRIPT" ]] && { _EXIT_REASON="no-evaluator"; exit 0; }
 
@@ -183,7 +263,8 @@ PAYLOAD=$("$JQ" -n \
     --arg     philosophy "$PHILOSOPHY" \
     --argjson user_model "$USER_MODEL" \
     --argjson history    "$HISTORY_JSON" \
-    '{prompt: $prompt, mode: $mode, philosophy: $philosophy, user_model: $user_model, history: $history}' \
+    --argjson skill_catalog "$SKILL_CATALOG" \
+    '{prompt: $prompt, mode: $mode, philosophy: $philosophy, user_model: $user_model, history: $history, skill_catalog: $skill_catalog}' \
     2>/dev/null) || exit 0
 
 JUDGMENT=$(printf '%s' "$PAYLOAD" | timeout 28 bash "$EVALUATE_SCRIPT" 2>/dev/null \
@@ -199,21 +280,29 @@ FEEDBACK=$(         echo "$JUDGMENT" | "$JQ" -r '.message // ""'      2>/dev/nul
 [[ -z "$FEEDBACK" ]] && { _EXIT_REASON="empty-feedback"; exit 0; }
 
 FRICTION=$(         echo "$JUDGMENT" | "$JQ" -r '.friction         // ""'    2>/dev/null || echo "")
-SKILL_AVAILABLE=$(  echo "$JUDGMENT" | "$JQ" -r '.skill_available  // false' 2>/dev/null || echo "false")
+SKILL_SUGGESTED=$(  echo "$JUDGMENT" | "$JQ" -r '.skill_suggested         // ""'    2>/dev/null || echo "")
+SKILL_GAP_DESC=$(   echo "$JUDGMENT" | "$JQ" -r '.skill_gap_description   // ""'    2>/dev/null || echo "")
 
 # ─── Write session state (only reached when coaching fires; coaching_triggered is always true here) ─
 NOW_EPOCH=$(date +%s)
 FRICTION_ARGS=()
 [[ -n "$FRICTION" ]] && FRICTION_ARGS=(--arg friction "$FRICTION")
+SKILL_ARGS=()
+[[ -n "$SKILL_SUGGESTED" ]] && SKILL_ARGS+=(--arg skill_suggested "$SKILL_SUGGESTED")
+[[ -n "$SKILL_GAP_DESC" ]] && SKILL_ARGS+=(--arg skill_gap_description "$SKILL_GAP_DESC")
+
 "$JQ" -n \
     --argjson ts "$NOW_EPOCH" \
     --argjson coaching_triggered true \
     --arg     type    "$INTERVENTION_TYPE" \
     --arg     message "$FEEDBACK" \
-    --argjson skill_available "$SKILL_AVAILABLE" \
+    --argjson skill_catalog "$SKILL_CATALOG" \
     "${FRICTION_ARGS[@]}" \
-    '{last_intervention_ts: $ts, coaching_triggered: $coaching_triggered, type: $type, message: $message, skill_available: $skill_available}
-     + (if $ARGS.named | has("friction") then {friction: $friction} else {} end)' \
+    "${SKILL_ARGS[@]}" \
+    '{last_intervention_ts: $ts, coaching_triggered: $coaching_triggered, type: $type, message: $message, skill_catalog: $skill_catalog}
+     + (if $ARGS.named | has("friction") then {friction: $friction} else {} end)
+     + (if $ARGS.named | has("skill_suggested") then {skill_suggested: $skill_suggested} else {} end)
+     + (if $ARGS.named | has("skill_gap_description") then {skill_gap_description: $skill_gap_description} else {} end)' \
     > "$STATE_FILE" 2>/dev/null || true
 DBG "state_write: path=$STATE_FILE coaching=true type=$INTERVENTION_TYPE friction=${FRICTION:-none} exists=$([ -f "$STATE_FILE" ] && echo yes || echo no)"
 

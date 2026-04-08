@@ -2,7 +2,7 @@
 # evaluate-prompt.sh — Prompt evaluator using claude -p
 #
 # Input:  JSON via stdin {prompt, mode, philosophy, user_model, history}
-# Output: JSON judgment  {intervene: bool, [type, message, friction?, skill_available?]}
+# Output: JSON judgment  {intervene: bool, [type, message, friction?, skill_suggested?, skill_gap_description?]}
 # Always exits 0. On any error outputs {"intervene":false}.
 
 set -uo pipefail
@@ -22,6 +22,7 @@ PHILOSOPHY=$(   echo "$INPUT" | "$JQ" -r '.philosophy  // ""'      2>/dev/null |
 USER_MODEL=$(   echo "$INPUT" | "$JQ" -c '.user_model  // {}'      2>/dev/null || echo "{}")
 HISTORY=$(      echo "$INPUT" | "$JQ" -r '.history     // [] | .[]' 2>/dev/null || echo "")
 TURN_COUNT=$(   echo "$INPUT" | "$JQ" '.history // [] | length'         2>/dev/null || echo "0")
+SKILL_CATALOG=$(echo "$INPUT" | "$JQ" -c '.skill_catalog // []' 2>/dev/null || echo "[]")
 
 [[ -z "$PROMPT" ]] && { echo "$FALLBACK"; exit 0; }
 
@@ -80,6 +81,19 @@ Be more sensitive to these patterns. Lower-priority issues can still trigger int
     fi
 fi
 
+# ─── Build skill catalog section ─────────────────────────────────────────────
+SKILL_SECTION=""
+SKILL_COUNT=$(echo "$SKILL_CATALOG" | "$JQ" 'length' 2>/dev/null || echo "0")
+if [[ "$SKILL_COUNT" -gt 0 ]]; then
+    SKILL_LIST=$(echo "$SKILL_CATALOG" | "$JQ" -r '.[] | "- /" + .name + " — " + .trigger' 2>/dev/null || echo "")
+    if [[ -n "$SKILL_LIST" ]]; then
+        SKILL_SECTION="## Available Skills
+The user has these skills installed. When their prompt describes work that matches a skill's trigger and they did not invoke it (no / prefix), weave a suggestion into your coaching message.
+
+${SKILL_LIST}"
+    fi
+fi
+
 PHILO_TEXT="${PHILOSOPHY:-Clarity upfront is better than iteration later. Think in systems, not tasks.}"
 
 # Truncate prompt to 500 chars
@@ -92,6 +106,8 @@ ${PHILO_TEXT}
 
 ${MODEL_SECTION}
 ${PRIORITY_SECTION:+${PRIORITY_SECTION}
+
+}${SKILL_SECTION:+${SKILL_SECTION}
 
 }## Intervention Types
 - nudge: Light suggestion. The prompt is okay but could be better. Tone: friendly pointer.
@@ -138,8 +154,16 @@ Fire reinforcement when you see genuine growth:
 
 Reinforcement messages must reference the specific improvement. Generic praise (\"Good prompt!\", \"Nice work!\") is worse than no reinforcement — it teaches the user nothing. Be specific about WHAT improved and WHY it matters.
 
-## Skill Availability
-If the user's prompt describes debugging, testing, building, designing, or reviewing work AND they did not invoke a skill (no / prefix), set \"skill_available\": true in your response. Otherwise omit it.
+## Skill Awareness
+When the user's prompt describes work that matches an installed skill (see Available Skills above) and they did not invoke it (no / prefix):
+- Set \"skill_suggested\": \"/skill-name\" in your response
+- Weave the suggestion naturally into your coaching message — explain why this skill would help for their specific task, don't just name-drop it
+
+When the prompt describes work that NO installed skill covers, but a skill would clearly help (recurring task type, complex workflow, structured process):
+- Set \"skill_gap_description\" with a one-sentence sketch of what the skill would do and when it would trigger
+- Only mention the gap in your coaching message if confidence is high — otherwise just log it for recap analysis
+
+Do not set both fields on the same prompt. Either an existing skill fits, or none does.
 
 ## Conversation Awareness
 This is turn ${TURN_COUNT} of the conversation (${TURN_COUNT} previous prompts in session history).
@@ -155,8 +179,8 @@ If turn count > 1, the user is mid-conversation. Claude already has the full con
 Respond with ONLY a JSON object, no markdown, no explanation:
 {\"intervene\": false}
 or
-{\"intervene\": true, \"type\": \"nudge|correction|challenge|reinforcement\", \"message\": \"your coaching message here\", \"friction\": \"vague_request|wrong_approach|missing_diagnostics|scope_drift|missing_skill\", \"skill_available\": true}
-The \"friction\" and \"skill_available\" fields are optional — include them only when applicable."
+{\"intervene\": true, \"type\": \"nudge|correction|challenge|reinforcement\", \"message\": \"your coaching message here\", \"friction\": \"vague_request|wrong_approach|missing_diagnostics|scope_drift|missing_skill\", \"skill_suggested\": \"/skill-name\", \"skill_gap_description\": \"one-sentence sketch\"}
+The \"friction\", \"skill_suggested\", and \"skill_gap_description\" fields are optional — include them only when applicable. Do not set both skill_suggested and skill_gap_description on the same response."
 
 # ─── Build user message with optional history ────────────────────────────────
 if [[ -n "$HISTORY" ]]; then
@@ -205,7 +229,8 @@ JUDGMENT=$(printf '%s' "$TEXT" | "$JQ" -e '
           and (.message | type == "string" and length > 0))
     then {intervene: true, type: .type, message: .message}
          + (if .friction and (.friction | IN("vague_request","wrong_approach","missing_diagnostics","scope_drift","missing_skill")) then {friction: .friction} else {} end)
-         + (if .skill_available then {skill_available: true} else {} end)
+         + (if .skill_suggested and (.skill_suggested | type == "string") then {skill_suggested: .skill_suggested} else {} end)
+         + (if .skill_gap_description and (.skill_gap_description | type == "string") then {skill_gap_description: .skill_gap_description} else {} end)
     else error("invalid")
     end' 2>/dev/null) || { echo "$FALLBACK"; exit 0; }
 

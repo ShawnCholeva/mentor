@@ -95,7 +95,7 @@ if echo "$PROMPT" | grep -qE "^/[a-z]"; then
         _IN_CAT=$(printf '%s' "$_CAT" | "$JQ" -r --arg s "$_SKILL_BARE" 'any(.[]; .name == $s)' 2>/dev/null || echo "false")
         if [[ "$_IN_CAT" == "true" ]]; then
             DBG "skill-capture: MATCH skill=${_SKILL_WITH_SLASH} → writing state"
-            _MERGED=$(cat "$STATE_FILE" | "$JQ" -c --arg s "$_SKILL_WITH_SLASH" \
+            _MERGED=$(cat "$STATE_FILE" 2>/dev/null | "$JQ" -c --arg s "$_SKILL_WITH_SLASH" \
                 '. + {skill_invoked: $s, coaching_triggered: false}' 2>/dev/null) || true
             if [[ -n "$_MERGED" ]]; then
                 _TMP="${STATE_FILE}.tmp.$$"

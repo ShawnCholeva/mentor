@@ -56,14 +56,14 @@ fi
 # ─── Count user turns from transcript ────────────────────────────────────────
 TURN_COUNT=1
 if [[ -n "$TRANSCRIPT_PATH" ]] && [[ -f "$TRANSCRIPT_PATH" ]]; then
-    TURN_COUNT=$(grep -c '"role":"user"\|"role": "user"' "$TRANSCRIPT_PATH" 2>/dev/null || echo "1")
+    TURN_COUNT=$(grep -cE '"role":"user"|"role": "user"' "$TRANSCRIPT_PATH" 2>/dev/null || echo "1")
     [[ "$TURN_COUNT" -lt 1 ]] && TURN_COUNT=1
 fi
 
 # ─── Estimate session outcome from transcript ──────────────────────────────
 SESSION_OUTCOME="unknown"
 if [[ "$TURN_COUNT" -ge 3 ]] && [[ -n "$TRANSCRIPT_PATH" ]] && [[ -f "$TRANSCRIPT_PATH" ]]; then
-    if grep -q '"git commit"\|"git add"' "$TRANSCRIPT_PATH" 2>/dev/null; then
+    if grep -qE '"git commit"|"git add"' "$TRANSCRIPT_PATH" 2>/dev/null; then
         SESSION_OUTCOME="achieved"
     elif tail -c 5000 "$TRANSCRIPT_PATH" 2>/dev/null | grep -qiE '"error"|"fail"|traceback' 2>/dev/null; then
         SESSION_OUTCOME="not_achieved"
@@ -76,27 +76,28 @@ SKILL_USED="null"
 LAST_PROMPT=""
 
 if [[ -n "$TRANSCRIPT_PATH" ]] && [[ -f "$TRANSCRIPT_PATH" ]]; then
-    LAST_PROMPT=$(grep '"role":"user"\|"role": "user"' "$TRANSCRIPT_PATH" 2>/dev/null | \
-        tail -1 | \
+    # Extract all user message texts in one pass (BSD+GNU grep compatible)
+    _ALL_PROMPTS=$(grep -E '"role":"user"|"role": "user"' "$TRANSCRIPT_PATH" 2>/dev/null | \
         "$JQ" -r '
             (.message.content // .content) |
             if type == "array" then [.[].text? // ""] | join(" ")
             else (. // "" | tostring)
-            end' 2>/dev/null | head -c 500 || echo "")
+            end' 2>/dev/null || echo "")
+    LAST_PROMPT=$(printf '%s' "$_ALL_PROMPTS" | tail -1 | head -c 500)
+    # Scan all prompts for skill invocations — catches mid-session /skill calls
+    _SKILL_LINE=$(printf '%s' "$_ALL_PROMPTS" | grep -E "^/[a-z]" | tail -1 || echo "")
 fi
 
-if [[ -n "$LAST_PROMPT" ]]; then
-    if echo "$LAST_PROMPT" | grep -qE "^/[a-z]"; then
-        _skill=$(echo "$LAST_PROMPT" | grep -oE "^/[a-z][a-z0-9:-]+" | head -1)
-        SKILL_USED="\"${_skill}\""
-        INTENT="skill-invoked"
+if [[ -n "$_SKILL_LINE" ]]; then
+    _skill=$(echo "$_SKILL_LINE" | grep -oE "^/[a-z][a-z0-9:-]+" | head -1)
+    SKILL_USED="\"${_skill}\""
+    INTENT="skill-invoked"
+elif [[ -n "$LAST_PROMPT" ]]; then
+    WORD_COUNT=$(echo "$LAST_PROMPT" | wc -w | tr -d '[:space:]')
+    if [[ "$WORD_COUNT" -lt 6 ]]; then
+        INTENT="vague"
     else
-        WORD_COUNT=$(echo "$LAST_PROMPT" | wc -w | tr -d '[:space:]')
-        if [[ "$WORD_COUNT" -lt 6 ]]; then
-            INTENT="vague"
-        else
-            INTENT="direct"
-        fi
+        INTENT="direct"
     fi
 fi
 

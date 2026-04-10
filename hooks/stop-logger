@@ -21,6 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UPDATE_SCRIPT="${SCRIPT_DIR}/lib/update-user-model.sh"
 
 mkdir -p "$COACHING_DIR"
+DBG() { echo "[$(date -Iseconds)] STOP-LOGGER-DBG $*" >> "${COACHING_DIR}/hook-debug.log" 2>/dev/null || true; }
 
 # ─── Resolve jq (auto-installs on first use) ──────────────────────────────────
 # shellcheck source=lib/bootstrap-jq.sh
@@ -86,20 +87,13 @@ if [[ -n "$TRANSCRIPT_PATH" ]] && [[ -f "$TRANSCRIPT_PATH" ]]; then
     LAST_PROMPT=$(printf '%s' "$_ALL_PROMPTS" | tail -1 | head -c 500)
 fi
 
-# ─── Detect skill invocations from history.jsonl (pre-expansion input) ────────
-# The transcript contains expanded SKILL.md content, not the original /skill-name.
-# history.jsonl .display has the raw user input before Claude Code expands skills.
-# Steps are broken apart so grep returning 1 (no matches) doesn't kill the script
-# under set -euo pipefail on bash 3.2 (macOS).
-HISTORY_FILE="${HOME}/.claude/history.jsonl"
-if [[ -n "$SESSION_ID" ]] && [[ -f "$HISTORY_FILE" ]]; then
-    _DISPLAYS=$(grep "\"sessionId\":\"${SESSION_ID}\"" "$HISTORY_FILE" 2>/dev/null | \
-        "$JQ" -r '.display // ""' 2>/dev/null || true)
-    _SKILL_NAMES=$(printf '%s' "$_DISPLAYS" | grep -oE "^/[a-z][a-z0-9:-]+" 2>/dev/null | \
-        sort -u || true)
-    if [[ -n "$_SKILL_NAMES" ]]; then
-        SKILL_USED=$(printf '%s' "$_SKILL_NAMES" | "$JQ" -Rn '[inputs]' 2>/dev/null || echo "[]")
-    fi
+# ─── Read skill_invoked from state (written by user-prompt-submit) ────────────
+SKILL_NAME=$(printf '%s' "${STATE:-}" | "$JQ" -r '.skill_invoked // ""' 2>/dev/null || echo "")
+if [[ -n "$SKILL_NAME" ]]; then
+    DBG "skill-used: read from state skill_invoked=${SKILL_NAME}"
+    SKILL_USED="[\"${SKILL_NAME}\"]"
+else
+    DBG "skill-used: none (skill_invoked null or absent)"
 fi
 
 if [[ "$SKILL_USED" != "[]" ]]; then

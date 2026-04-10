@@ -84,8 +84,15 @@ if [[ -n "$TRANSCRIPT_PATH" ]] && [[ -f "$TRANSCRIPT_PATH" ]]; then
             else (. // "" | tostring)
             end' 2>/dev/null || echo "")
     LAST_PROMPT=$(printf '%s' "$_ALL_PROMPTS" | tail -1 | head -c 500)
-    # Collect all unique skill invocations from the session as a JSON array
-    SKILL_USED=$(printf '%s' "$_ALL_PROMPTS" | \
+fi
+
+# ─── Detect skill invocations from history.jsonl (pre-expansion input) ────────
+# The transcript contains expanded SKILL.md content, not the original /skill-name.
+# history.jsonl .display has the raw user input before Claude Code expands skills.
+HISTORY_FILE="${HOME}/.claude/history.jsonl"
+if [[ -n "$SESSION_ID" ]] && [[ -f "$HISTORY_FILE" ]]; then
+    SKILL_USED=$(grep "\"sessionId\":\"${SESSION_ID}\"" "$HISTORY_FILE" 2>/dev/null | \
+        "$JQ" -r '.display // ""' 2>/dev/null | \
         grep -oE "^/[a-z][a-z0-9:-]+" | sort -u | \
         "$JQ" -Rn '[inputs]' 2>/dev/null || echo "[]")
 fi

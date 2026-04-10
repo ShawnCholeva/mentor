@@ -120,6 +120,21 @@ PROMPT_TRIMMED=$(echo "$PROMPT" | tr '[:upper:]' '[:lower:]' | tr -d '[:punct:]'
 AFFIRMATIONS="^(yes|no|ok|okay|sure|yep|nope|yup|nah|agreed|correct|exactly|right|proceed|continue|go ahead|do it|sounds good|looks good|make it so|that works|perfect|great|fine|done|got it)$"
 echo "$PROMPT_TRIMMED" | grep -qiE "$AFFIRMATIONS" && { _EXIT_REASON="affirmation"; exit 0; }
 
+# ─── Clear stale skill_invoked (this is a normal prompt, not a skill invocation) ─
+if [[ -n "$SESSION_ID" ]] && [[ -f "$STATE_FILE" ]]; then
+    _PREV_SKILL=$("$JQ" -r '.skill_invoked // ""' "$STATE_FILE" 2>/dev/null || echo "")
+    if [[ -n "$_PREV_SKILL" ]]; then
+        DBG "skill-capture: CLEAR (was ${_PREV_SKILL})"
+        _MERGED=$(cat "$STATE_FILE" 2>/dev/null | "$JQ" -c '. + {skill_invoked: null}' 2>/dev/null) || true
+        if [[ -n "$_MERGED" ]]; then
+            _TMP="${STATE_FILE}.tmp.$$"
+            printf '%s\n' "$_MERGED" > "$_TMP" 2>/dev/null \
+                && mv "$_TMP" "$STATE_FILE" 2>/dev/null \
+                || rm -f "$_TMP" 2>/dev/null || true
+        fi
+    fi
+fi
+
 # ─── Guard: per-session cooldown ─────────────────────────────────────────────
 DBG "cooldown: session='${SESSION_ID:-EMPTY}' state_file=$([ -f "$STATE_FILE" ] && echo exists || echo missing) ls=$(ls -la "$STATE_FILE" 2>&1 || true)"
 if [[ -n "$SESSION_ID" ]] && [[ -f "$STATE_FILE" ]]; then

@@ -5,6 +5,10 @@
 set -euo pipefail
 
 HOOK="$(cd "$(dirname "$0")/.." && pwd)/hooks/user-prompt-submit"
+# Capture jq path before HOME is overridden — jq is bootstrapped by the hook
+# to ~/.claude/coaching/bin/jq and is not necessarily in PATH
+JQ=$(command -v jq 2>/dev/null || echo "${HOME}/.claude/coaching/bin/jq")
+[[ -x "$JQ" ]] || { echo "ERROR: jq not found at $JQ"; exit 1; }
 PASS=0
 FAIL=0
 
@@ -62,7 +66,7 @@ EOF
     if [[ -n "$expected_skill" ]]; then
         if [[ -f "$STATE_FILE" ]]; then
             local actual
-            actual=$(jq -r '.skill_invoked // ""' "$STATE_FILE" 2>/dev/null || echo "")
+            actual=$("$JQ" -r '.skill_invoked // ""' "$STATE_FILE" 2>/dev/null || echo "")
             if [[ "$actual" == "$expected_skill" ]]; then
                 pass "$name"
             else
@@ -74,7 +78,7 @@ EOF
     else
         if [[ -f "$STATE_FILE" ]]; then
             local actual
-            actual=$(jq -r '.skill_invoked // ""' "$STATE_FILE" 2>/dev/null || echo "")
+            actual=$("$JQ" -r '.skill_invoked // ""' "$STATE_FILE" 2>/dev/null || echo "")
             if [[ -z "$actual" || "$actual" == "null" ]]; then
                 pass "$name"
             else

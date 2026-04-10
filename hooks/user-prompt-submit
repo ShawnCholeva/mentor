@@ -86,82 +86,11 @@ fi
 
 STATE_FILE="${COACHING_DIR}/session-${SESSION_ID}.tmp"
 
-# ─── Guard: skill invocations ─────────────────────────────────────────────────
-if echo "$PROMPT" | grep -qE "^/[a-z]"; then
-    _SKILL_WITH_SLASH=$(echo "$PROMPT" | grep -oE "^/[a-z][a-z0-9:-]*" | head -1 || echo "")
-    _SKILL_BARE="${_SKILL_WITH_SLASH#/}"
-    if [[ -n "$SESSION_ID" ]] && [[ -f "$STATE_FILE" ]]; then
-        _CAT=$(cat "$STATE_FILE" 2>/dev/null | "$JQ" -c '.skill_catalog // []' 2>/dev/null || echo "[]")
-        _IN_CAT=$(printf '%s' "$_CAT" | "$JQ" -r --arg s "$_SKILL_BARE" 'any(.[]; .name == $s)' 2>/dev/null || echo "false")
-        if [[ "$_IN_CAT" == "true" ]]; then
-            DBG "skill-capture: MATCH skill=${_SKILL_WITH_SLASH} → writing state"
-            _MERGED=$(cat "$STATE_FILE" 2>/dev/null | "$JQ" -c --arg s "$_SKILL_WITH_SLASH" \
-                '. + {skill_invoked: $s, coaching_triggered: false}' 2>/dev/null) || true
-            if [[ -n "$_MERGED" ]]; then
-                _TMP="${STATE_FILE}.tmp.$$"
-                printf '%s\n' "$_MERGED" > "$_TMP" 2>/dev/null \
-                    && mv "$_TMP" "$STATE_FILE" 2>/dev/null \
-                    || { rm -f "$_TMP" 2>/dev/null || true; DBG "skill-capture: WARN state write failed"; } || true
-            else
-                DBG "skill-capture: WARN state write failed"
-            fi
-        else
-            DBG "skill-capture: NO-MATCH skill=${_SKILL_WITH_SLASH} (not in catalog)"
-        fi
-    else
-        DBG "skill-capture: SKIP skill=${_SKILL_WITH_SLASH} (no catalog cached)"
-    fi
-    _EXIT_REASON="slash-command"
-    exit 0
-fi
-
-# ─── Guard: conversational affirmations ───────────────────────────────────────
-PROMPT_TRIMMED=$(echo "$PROMPT" | tr '[:upper:]' '[:lower:]' | tr -d '[:punct:]' | xargs)
-AFFIRMATIONS="^(yes|no|ok|okay|sure|yep|nope|yup|nah|agreed|correct|exactly|right|proceed|continue|go ahead|do it|sounds good|looks good|make it so|that works|perfect|great|fine|done|got it)$"
-echo "$PROMPT_TRIMMED" | grep -qiE "$AFFIRMATIONS" && { _EXIT_REASON="affirmation"; exit 0; }
-
-# ─── Clear stale skill_invoked (this is a normal prompt, not a skill invocation) ─
-if [[ -n "$SESSION_ID" ]] && [[ -f "$STATE_FILE" ]]; then
-    _PREV_SKILL=$("$JQ" -r '.skill_invoked // ""' "$STATE_FILE" 2>/dev/null || echo "")
-    if [[ -n "$_PREV_SKILL" ]]; then
-        DBG "skill-capture: CLEAR (was ${_PREV_SKILL})"
-        _MERGED=$(cat "$STATE_FILE" 2>/dev/null | "$JQ" -c '. + {skill_invoked: null}' 2>/dev/null) || true
-        if [[ -n "$_MERGED" ]]; then
-            _TMP="${STATE_FILE}.tmp.$$"
-            printf '%s\n' "$_MERGED" > "$_TMP" 2>/dev/null \
-                && mv "$_TMP" "$STATE_FILE" 2>/dev/null \
-                || rm -f "$_TMP" 2>/dev/null || true
-        fi
-    fi
-fi
-
-# ─── Guard: per-session cooldown ─────────────────────────────────────────────
-DBG "cooldown: session='${SESSION_ID:-EMPTY}' state_file=$([ -f "$STATE_FILE" ] && echo exists || echo missing) ls=$(ls -la "$STATE_FILE" 2>&1 || true)"
-if [[ -n "$SESSION_ID" ]] && [[ -f "$STATE_FILE" ]]; then
-    LAST_TS=$("$JQ" -r '.last_intervention_ts // 0' "$STATE_FILE" 2>/dev/null || echo "0")
-    NOW_EPOCH=$(date +%s)
-    ELAPSED=$(( NOW_EPOCH - LAST_TS ))
-    if [[ "$ELAPSED" -lt "$COOLDOWN_SECONDS" ]]; then
-        DBG "cooldown: BLOCKED elapsed=${ELAPSED}s < ${COOLDOWN_SECONDS}s"
-        _EXIT_REASON="cooldown-blocked"
-        exit 0
-    fi
-    DBG "cooldown: passed elapsed=${ELAPSED}s"
-fi
-
-# ─── Build skill catalog (once per session) ──────────────────────────────────
+# ─── Build skill catalog (always fresh from installed_plugins.json) ──────────
 SKILL_CATALOG="[]"
-SKILL_CATALOG_BUILT=false
 INSTALLED_PLUGINS="${HOME}/.claude/plugins/installed_plugins.json"
 
-if [[ -n "$SESSION_ID" ]] && [[ -f "$STATE_FILE" ]]; then
-    # Reuse cached catalog from session state
-    SKILL_CATALOG=$("$JQ" -c '.skill_catalog // []' "$STATE_FILE" 2>/dev/null || echo "[]")
-    [[ "$SKILL_CATALOG" != "[]" ]] && SKILL_CATALOG_BUILT=true
-fi
-
-if [[ "$SKILL_CATALOG_BUILT" == "false" ]] && [[ -f "$INSTALLED_PLUGINS" ]]; then
-    # Build catalog by scanning each plugin's install path for SKILL.md files
+if [[ -f "$INSTALLED_PLUGINS" ]]; then
     CATALOG_ENTRIES="[]"
     while IFS= read -r install_path; do
         [[ -z "$install_path" ]] && continue
@@ -230,7 +159,70 @@ if [[ "$SKILL_CATALOG_BUILT" == "false" ]] && [[ -f "$INSTALLED_PLUGINS" ]]; the
 
     SKILL_CATALOG="$CATALOG_ENTRIES"
 fi
-DBG "skill_catalog: from_cache=${SKILL_CATALOG_BUILT} entries=$(echo "$SKILL_CATALOG" | "$JQ" 'length' 2>/dev/null || echo '?')"
+DBG "skill_catalog: entries=$(echo "$SKILL_CATALOG" | "$JQ" 'length' 2>/dev/null || echo '?')"
+
+# ─── Guard: skill invocations ─────────────────────────────────────────────────
+if echo "$PROMPT" | grep -qE "^/[a-z]"; then
+    _SKILL_WITH_SLASH=$(echo "$PROMPT" | grep -oE "^/[a-z][a-z0-9:-]*" | head -1 || echo "")
+    _SKILL_BARE="${_SKILL_WITH_SLASH#/}"
+    if [[ -n "$SESSION_ID" ]] && [[ -f "$STATE_FILE" ]]; then
+        _CAT=$(cat "$STATE_FILE" 2>/dev/null | "$JQ" -c '.skill_catalog // []' 2>/dev/null || echo "[]")
+        _IN_CAT=$(printf '%s' "$_CAT" | "$JQ" -r --arg s "$_SKILL_BARE" 'any(.[]; .name == $s)' 2>/dev/null || echo "false")
+        if [[ "$_IN_CAT" == "true" ]]; then
+            DBG "skill-capture: MATCH skill=${_SKILL_WITH_SLASH} → writing state"
+            _MERGED=$(cat "$STATE_FILE" 2>/dev/null | "$JQ" -c --arg s "$_SKILL_WITH_SLASH" \
+                '. + {skill_invoked: $s, coaching_triggered: false}' 2>/dev/null) || true
+            if [[ -n "$_MERGED" ]]; then
+                _TMP="${STATE_FILE}.tmp.$$"
+                printf '%s\n' "$_MERGED" > "$_TMP" 2>/dev/null \
+                    && mv "$_TMP" "$STATE_FILE" 2>/dev/null \
+                    || { rm -f "$_TMP" 2>/dev/null || true; DBG "skill-capture: WARN state write failed"; } || true
+            else
+                DBG "skill-capture: WARN state write failed"
+            fi
+        else
+            DBG "skill-capture: NO-MATCH skill=${_SKILL_WITH_SLASH} (not in catalog)"
+        fi
+    else
+        DBG "skill-capture: SKIP skill=${_SKILL_WITH_SLASH} (no catalog cached)"
+    fi
+    _EXIT_REASON="slash-command"
+    exit 0
+fi
+
+# ─── Guard: conversational affirmations ───────────────────────────────────────
+PROMPT_TRIMMED=$(echo "$PROMPT" | tr '[:upper:]' '[:lower:]' | tr -d '[:punct:]' | xargs)
+AFFIRMATIONS="^(yes|no|ok|okay|sure|yep|nope|yup|nah|agreed|correct|exactly|right|proceed|continue|go ahead|do it|sounds good|looks good|make it so|that works|perfect|great|fine|done|got it)$"
+echo "$PROMPT_TRIMMED" | grep -qiE "$AFFIRMATIONS" && { _EXIT_REASON="affirmation"; exit 0; }
+
+# ─── Clear stale skill_invoked (this is a normal prompt, not a skill invocation) ─
+if [[ -n "$SESSION_ID" ]] && [[ -f "$STATE_FILE" ]]; then
+    _PREV_SKILL=$("$JQ" -r '.skill_invoked // ""' "$STATE_FILE" 2>/dev/null || echo "")
+    if [[ -n "$_PREV_SKILL" ]]; then
+        DBG "skill-capture: CLEAR (was ${_PREV_SKILL})"
+        _MERGED=$(cat "$STATE_FILE" 2>/dev/null | "$JQ" -c '. + {skill_invoked: null}' 2>/dev/null) || true
+        if [[ -n "$_MERGED" ]]; then
+            _TMP="${STATE_FILE}.tmp.$$"
+            printf '%s\n' "$_MERGED" > "$_TMP" 2>/dev/null \
+                && mv "$_TMP" "$STATE_FILE" 2>/dev/null \
+                || rm -f "$_TMP" 2>/dev/null || true
+        fi
+    fi
+fi
+
+# ─── Guard: per-session cooldown ─────────────────────────────────────────────
+DBG "cooldown: session='${SESSION_ID:-EMPTY}' state_file=$([ -f "$STATE_FILE" ] && echo exists || echo missing) ls=$(ls -la "$STATE_FILE" 2>&1 || true)"
+if [[ -n "$SESSION_ID" ]] && [[ -f "$STATE_FILE" ]]; then
+    LAST_TS=$("$JQ" -r '.last_intervention_ts // 0' "$STATE_FILE" 2>/dev/null || echo "0")
+    NOW_EPOCH=$(date +%s)
+    ELAPSED=$(( NOW_EPOCH - LAST_TS ))
+    if [[ "$ELAPSED" -lt "$COOLDOWN_SECONDS" ]]; then
+        DBG "cooldown: BLOCKED elapsed=${ELAPSED}s < ${COOLDOWN_SECONDS}s"
+        _EXIT_REASON="cooldown-blocked"
+        exit 0
+    fi
+    DBG "cooldown: passed elapsed=${ELAPSED}s"
+fi
 
 # ─── Guard: evaluate script must exist ───────────────────────────────────────
 [[ ! -f "$EVALUATE_SCRIPT" ]] && { _EXIT_REASON="no-evaluator"; exit 0; }
@@ -352,10 +344,9 @@ SKILL_ARGS=()
     --argjson coaching_triggered true \
     --arg     type    "$INTERVENTION_TYPE" \
     --arg     message "$FEEDBACK" \
-    --argjson skill_catalog "$SKILL_CATALOG" \
     "${FRICTION_ARGS[@]+"${FRICTION_ARGS[@]}"}" \
     "${SKILL_ARGS[@]+"${SKILL_ARGS[@]}"}" \
-    '{last_intervention_ts: $ts, coaching_triggered: $coaching_triggered, type: $type, message: $message, skill_catalog: $skill_catalog}
+    '{last_intervention_ts: $ts, coaching_triggered: $coaching_triggered, type: $type, message: $message}
      + (if $ARGS.named | has("friction") then {friction: $friction} else {} end)
      + (if $ARGS.named | has("skill_suggested") then {skill_suggested: $skill_suggested} else {} end)
      + (if $ARGS.named | has("skill_gap_description") then {skill_gap_description: $skill_gap_description} else {} end)' \

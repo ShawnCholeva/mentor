@@ -342,6 +342,7 @@ SKILL_ARGS=()
 [[ -n "$SKILL_SUGGESTED" ]] && SKILL_ARGS+=(--arg skill_suggested "$SKILL_SUGGESTED")
 [[ -n "$SKILL_GAP_DESC" ]] && SKILL_ARGS+=(--arg skill_gap_description "$SKILL_GAP_DESC")
 
+_TMP_STATE="${STATE_FILE}.tmp.$$"
 "$JQ" -n \
     --argjson ts "$NOW_EPOCH" \
     --argjson coaching_triggered true \
@@ -353,7 +354,9 @@ SKILL_ARGS=()
      + (if $ARGS.named | has("friction") then {friction: $friction} else {} end)
      + (if $ARGS.named | has("skill_suggested") then {skill_suggested: $skill_suggested} else {} end)
      + (if $ARGS.named | has("skill_gap_description") then {skill_gap_description: $skill_gap_description} else {} end)' \
-    > "$STATE_FILE" 2>/dev/null || true
+    > "$_TMP_STATE" 2>/dev/null \
+    && mv "$_TMP_STATE" "$STATE_FILE" 2>/dev/null \
+    || { rm -f "$_TMP_STATE" 2>/dev/null || true; } || true
 DBG "state_write: path=$STATE_FILE coaching=true type=$INTERVENTION_TYPE friction=${FRICTION:-none} exists=$([ -f "$STATE_FILE" ] && echo yes || echo no)"
 
 # ─── Format coaching message ──────────────────────────────────────────────────

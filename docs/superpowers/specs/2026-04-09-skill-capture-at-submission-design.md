@@ -119,6 +119,52 @@ No other changes to stop-logger.
 
 ---
 
+## Debugging
+
+All skill capture decisions must be visible in `~/.claude/coaching/hook-debug.log` (the same log used by the rest of `user-prompt-submit`). The `DBG` function is already defined in that script.
+
+Required debug lines in `user-prompt-submit`:
+
+| Event | Message |
+|-------|---------|
+| Skill detected, catalog match | `skill-capture: MATCH skill=/brainstorm → writing state` |
+| Skill detected, no catalog match (internal command) | `skill-capture: NO-MATCH skill=/exit (not in catalog)` |
+| Skill detected, no state file / no catalog yet | `skill-capture: SKIP skill=/brainstorm (no catalog cached)` |
+| Normal prompt, stale skill cleared | `skill-capture: CLEAR (was /brainstorm)` |
+| Normal prompt, no stale skill to clear | _(no log line — not interesting)_ |
+| State file write fails | `skill-capture: WARN state write failed` |
+
+Required debug line in `stop-logger`:
+
+| Event | Message |
+|-------|---------|
+| Skill read from state | `skill-used: read from state skill_invoked=/brainstorm` |
+| No skill in state | `skill-used: none (skill_invoked null or absent)` |
+
+These lines make the full decision trail visible without running a debugger: open `hook-debug.log`, search for `skill-capture:` and `skill-used:` to trace any invocation end-to-end.
+
+---
+
+## Validation
+
+At the end of implementation, before bumping the version, verify the fix end-to-end:
+
+1. **Skill recorded correctly** — invoke a real installed skill (e.g. `/mentor status`), then inspect the most recent `interactions.jsonl` entry:
+   ```bash
+   tail -1 ~/.claude/coaching/interactions.jsonl | jq '.skill_used'
+   # expected: ["/mentor"]
+   ```
+
+2. **Internal command not recorded** — invoke `/exit` or `/usage` in a session, confirm the log entry has `skill_used: []`.
+
+3. **Stale skill cleared** — after a skill turn, submit a normal prompt, confirm that turn's log entry has `skill_used: []` (not the previous skill).
+
+4. **Debug log trace** — after steps 1–3, confirm `hook-debug.log` contains `skill-capture:` and `skill-used:` lines that correctly explain each decision.
+
+5. **No regression on non-skill sessions** — submit several normal prompts in a fresh session, confirm all entries log correctly with `skill_used: []` and `coaching_triggered` reflects actual interventions.
+
+---
+
 ## What This Removes
 
 - All `history.jsonl` scanning from `stop-logger`

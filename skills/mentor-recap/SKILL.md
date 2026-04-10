@@ -31,7 +31,7 @@ If fewer than 20 entries exist:
 
 Parse the JSONL: each line is one interaction entry with fields:
 - `intent` — how the prompt was classified: `vague`, `skill-invoked`, or `direct`
-- `skill_used` — skill invoked (e.g. `/mentor`, or null if a direct prompt)
+- `skill_used` — skills invoked this session as a JSON array (e.g. `["/mentor", "/brainstorm"]`, or `[]` if none). Older entries may have a string or null instead — treat a string as a single-element array and null as `[]`.
 - `turn_count` — number of turns to complete the task
 - `coaching_triggered` — whether Mentor intervened
 - `intervention_type` — type of intervention: `nudge`, `correction`, `challenge`, `reinforcement`, or null
@@ -56,8 +56,8 @@ Calculate:
 |--------|-----|
 | Total interactions | Count entries |
 | Intent distribution | Count by `intent` field |
-| Skill usage | Count and rank each distinct `skill_used` value (non-null) |
-| Direct prompts | Count entries where `skill_used` is null |
+| Skill usage | Flatten all `skill_used` arrays across entries, count and rank each distinct skill name |
+| Direct prompts | Count entries where `skill_used` is empty (null, `[]`, or absent) |
 | Avg turn count | Mean of `turn_count` across all entries |
 | High-iteration rate | % of entries where `turn_count` >= 4 |
 | Mentor trigger rate | % where `coaching_triggered` = true |
@@ -65,7 +65,7 @@ Calculate:
 | Friction distribution | Count by `friction_type` field (non-null entries only) |
 | Session outcomes | Count by `session_outcome` field |
 | Skill suggestions | Count and rank each distinct `skill_suggested` value (non-null) |
-| Skill adoption | For each `skill_suggested` value, count how many times that same skill appears as `skill_used` in subsequent entries |
+| Skill adoption | For each `skill_suggested` value, count how many times that same skill appears anywhere in a `skill_used` array in subsequent entries |
 | Skill gaps | Collect all `skill_gap_description` values (non-null) for pattern analysis |
 
 ---

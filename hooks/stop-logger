@@ -72,7 +72,7 @@ fi
 
 # ─── Classify intent from transcript ─────────────────────────────────────────
 INTENT="unknown"
-SKILL_USED="null"
+SKILL_USED="[]"
 LAST_PROMPT=""
 
 if [[ -n "$TRANSCRIPT_PATH" ]] && [[ -f "$TRANSCRIPT_PATH" ]]; then
@@ -84,13 +84,13 @@ if [[ -n "$TRANSCRIPT_PATH" ]] && [[ -f "$TRANSCRIPT_PATH" ]]; then
             else (. // "" | tostring)
             end' 2>/dev/null || echo "")
     LAST_PROMPT=$(printf '%s' "$_ALL_PROMPTS" | tail -1 | head -c 500)
-    # Scan all prompts for skill invocations — catches mid-session /skill calls
-    _SKILL_LINE=$(printf '%s' "$_ALL_PROMPTS" | grep -E "^/[a-z]" | tail -1 || echo "")
+    # Collect all unique skill invocations from the session as a JSON array
+    SKILL_USED=$(printf '%s' "$_ALL_PROMPTS" | \
+        grep -oE "^/[a-z][a-z0-9:-]+" | sort -u | \
+        "$JQ" -Rn '[inputs]' 2>/dev/null || echo "[]")
 fi
 
-if [[ -n "$_SKILL_LINE" ]]; then
-    _skill=$(echo "$_SKILL_LINE" | grep -oE "^/[a-z][a-z0-9:-]+" | head -1)
-    SKILL_USED="\"${_skill}\""
+if [[ "$SKILL_USED" != "[]" ]]; then
     INTENT="skill-invoked"
 elif [[ -n "$LAST_PROMPT" ]]; then
     WORD_COUNT=$(echo "$LAST_PROMPT" | wc -w | tr -d '[:space:]')
